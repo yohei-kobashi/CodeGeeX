@@ -1,0 +1,58 @@
+Bootstrap: docker
+From: ubuntu:22.04
+
+%environment
+    export DEBIAN_FRONTEND=noninteractive
+    export PATH=/usr/local/go/bin:$PATH
+    export LANG=C.UTF-8
+    export LC_ALL=C.UTF-8
+    export WORKDIR=/workspace
+    export PYTHONUNBUFFERED=1
+
+%post
+    set -e
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        software-properties-common \
+        ca-certificates \
+        gnupg \
+        curl wget \
+        build-essential \
+        git \
+        python3 python3-pip \
+        g++-11 \
+        libboost-all-dev \
+        golang-go
+    rm -rf /var/lib/apt/lists/*
+
+    # OpenJDK 18（PPA。安定性が必要なら Temurin に置き換え可）
+    add-apt-repository ppa:openjdk-r/ppa -y
+    apt-get update
+    apt-get install -y --no-install-recommends openjdk-18-jdk
+    rm -rf /var/lib/apt/lists/*
+
+    # Node.js 16 + pin to 16.14.0 + js-md5
+    curl -fsSL https://deb.nodesource.com/setup_16.x | bash -
+    apt-get update
+    apt-get install -y --no-install-recommends nodejs
+    npm install -g n
+    n 16.14.0
+    npm install -g js-md5@0.7.3
+    rm -rf /var/lib/apt/lists/*
+
+    # Python packages for evaluator
+    python3 -m pip install --no-cache-dir \
+        fire \
+        regex \
+        numpy \
+        tqdm
+
+    mkdir -p /workspace
+
+%runscript
+    # デフォルト実行：ホストのカレントを -B で /workspace にバインドする前提
+    exec python3 /workspace/evaluate_humaneval_x.py "$@"
+
+%labels
+    Maintainer "you"
+    Description "Humaneval-X evaluator environment (Ubuntu 22.04)"
