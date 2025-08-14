@@ -20,7 +20,7 @@ def add_args(parser):
 
     group.add_argument("--model-name-or-path", type=str, required=True)
     group.add_argument("--src-path", type=str, required=True)
-    group.add_argument("--tgt-path", type=str, required=False)
+    group.add_argument("--tgt-path", type=str, required=True)
     group.add_argument("--dataset", type=str, default="humaneval")
     group.add_argument("--language-src-type", type=str, default=None)
     group.add_argument("--language-tgt-type", type=str, default=None)
@@ -44,7 +44,7 @@ def main():
 
     entries = read_translation_dataset(
         args.src_path,
-        args.tgt_path or "",
+        args.tgt_path,
         lang_src=args.language_src_type,
         lang_tgt=args.language_tgt_type,
         dataset_type=args.dataset,
@@ -64,11 +64,10 @@ def main():
         model=args.model_name_or_path,
         tensor_parallel_size=1,
         dtype="bfloat16",
-        # 速度最適化したい場合は以下のような追加も検討可:
-        # gpu_memory_utilization=0.95,
-        # kv_cache_dtype="fp8",
-        # max_num_batched_tokens=16384,
-        # max_num_seqs=args.batch_size,
+        gpu_memory_utilization=0.95,
+        kv_cache_dtype="fp8",
+        max_num_batched_tokens=16384,
+        max_num_seqs=args.batch_size,
     )
 
     # 共通の SamplingParams（必要ならリクエストごとに別インスタンスでもOK）
