@@ -70,14 +70,13 @@ def main():
         max_num_seqs=args.batch_size,
     )
 
-    # 共通の SamplingParams（必要ならリクエストごとに別インスタンスでもOK）
+    # 共通の SamplingParams
     base_params = SamplingParams(
         temperature=args.temperature,
         top_p=args.top_p,
         top_k=args.top_k,
         max_tokens=args.max_tokens,
-        # 必要に応じて stop を追加
-        # stop=["<|endoftext|>", "</s>", "<|EOT|>", "<|im_end|>"]
+        stop=["<|endoftext|>", "</s>", "<|EOT|>", "<|im_end|>"]
     )
 
     start_time = time.perf_counter()
