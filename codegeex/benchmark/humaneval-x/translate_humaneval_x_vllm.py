@@ -82,6 +82,10 @@ def main():
     start_time = time.perf_counter()
     n_done = 0
 
+    output_dir = os.path.dirname(args.output_file)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+        
     with open(args.output_file, "w", encoding="utf-8") as outfile:
         # バッチでまとめて生成
         for i in range(0, total, args.batch_size):
