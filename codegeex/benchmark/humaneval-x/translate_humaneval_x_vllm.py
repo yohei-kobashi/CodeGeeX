@@ -9,101 +9,29 @@ import logging
 import json
 
 from codegeex.benchmark.utils import read_translation_dataset
-from vllm import LLM, SamplingParams, Request
+from vllm import LLM, SamplingParams
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
 def add_args(parser):
-    """Argument definitions for vLLM-based code translation."""
     group = parser.add_argument_group("translation")
 
-    group.add_argument(
-        "--model-name-or-path",
-        type=str,
-        required=True,
-        help="Path to a vLLM-compatible model or Hugging Face repo name",
-    )
-    group.add_argument(
-        "--src-path",
-        type=str,
-        required=True,
-        help="Path to the source code JSONL file",
-    )
-    group.add_argument(
-        "--tgt-path",
-        type=str,
-        required=False,
-        help="Path to the target code JSONL file (optional reference)",
-    )
-    group.add_argument(
-        "--dataset",
-        type=str,
-        default="humaneval",
-        help="Dataset type",
-    )
-    group.add_argument(
-        "--language-src-type",
-        type=str,
-        default=None,
-        help="Identifier for the source language",
-    )
-    group.add_argument(
-        "--language-tgt-type",
-        type=str,
-        default=None,
-        help="Identifier for the target language",
-    )
-    group.add_argument(
-        "--samples-per-problem",
-        type=int,
-        default=1,
-        help="Number of samples to generate per problem",
-    )
-    group.add_argument(
-        "--batch-size",
-        type=int,
-        default=8,
-        help="Batch size for vLLM",
-    )
-    group.add_argument(
-        "--temperature",
-        type=float,
-        default=1.0,
-        help="Sampling temperature",
-    )
-    group.add_argument(
-        "--top-p",
-        type=float,
-        default=0.9,
-        help="Top-p sampling probability threshold",
-    )
-    group.add_argument(
-        "--top-k",
-        type=int,
-        default=0,
-        help="Top-k sampling token limit",
-    )
-    group.add_argument(
-        "--max-tokens",
-        type=int,
-        default=512,
-        help="Maximum number of tokens to generate",
-    )
-    group.add_argument(
-        "--output-file",
-        type=str,
-        default="translations.jsonl",
-        help="Output JSONL file for generation results",
-    )
-    group.add_argument(
-        "--seed",
-        type=int,
-        default=42,
-        help="Random seed",
-    )
-
+    group.add_argument("--model-name-or-path", type=str, required=True)
+    group.add_argument("--src-path", type=str, required=True)
+    group.add_argument("--tgt-path", type=str, required=True)
+    group.add_argument("--dataset", type=str, default="humaneval")
+    group.add_argument("--language-src-type", type=str, default=None)
+    group.add_argument("--language-tgt-type", type=str, default=None)
+    group.add_argument("--samples-per-problem", type=int, default=1)
+    group.add_argument("--batch-size", type=int, default=8)
+    group.add_argument("--temperature", type=float, default=1.0)
+    group.add_argument("--top-p", type=float, default=0.9)
+    group.add_argument("--top-k", type=int, default=0)
+    group.add_argument("--max-tokens", type=int, default=512)
+    group.add_argument("--output-file", type=str, default="translations.jsonl")
+    group.add_argument("--seed", type=int, default=42)
     return parser
 
 
@@ -112,17 +40,16 @@ def main():
     parser = add_args(parser)
     args = parser.parse_args()
 
-    # Set random seed
     random.seed(args.seed)
 
-    # Load the dataset
     entries = read_translation_dataset(
         args.src_path,
-        args.tgt_path or "",
+        args.tgt_path,
         lang_src=args.language_src_type,
         lang_tgt=args.language_tgt_type,
         dataset_type=args.dataset,
     )
+
     # Duplicate each entry samples_per_problem times and shuffle
     tasks = []
     for entry in entries.values():
@@ -132,50 +59,63 @@ def main():
     total = len(tasks)
     logger.info(f"Loaded {len(entries)} problems, total tasks: {total}")
 
-    # Initialize vLLM
+    # Initialize vLLM (H200ならbf16推奨 / device指定は不要)
     llm = LLM(
         model=args.model_name_or_path,
-        tensor_parallel_size=1,    # Assuming single GPU/worker
-        dtype="fp16",               # Change dtype as needed
-        device="cuda",
+        tensor_parallel_size=1,
+        dtype="bfloat16",
+        gpu_memory_utilization=0.95,
+        kv_cache_dtype="fp8",
+        max_num_batched_tokens=16384,
+        max_num_seqs=args.batch_size,
     )
 
-    # Prepare output file
-    outfile = open(args.output_file, "w", encoding="utf-8")
+    # 共通の SamplingParams
+    base_params = SamplingParams(
+        temperature=args.temperature,
+        top_p=args.top_p,
+        top_k=args.top_k,
+        max_tokens=args.max_tokens,
+        stop=["<|endoftext|>", "</s>", "<|EOT|>", "<|im_end|>"]
+    )
 
     start_time = time.perf_counter()
-    # Process in batches sequentially
-    for idx in range(0, total, args.batch_size):
-        batch = tasks[idx : idx + args.batch_size]
-        # Create list of requests
-        requests = []
-        for entry in batch:
-            prompt = entry.get("src", entry.get("prompt", ""))
-            req_id = entry["task_id"]
-            sampling_params = SamplingParams(
-                temperature=args.temperature,
-                top_p=args.top_p,
-                top_k=args.top_k,
-                max_tokens=args.max_tokens,
-            )
-            requests.append(Request(prompt=prompt, request_id=req_id, sampling_params=sampling_params))
+    n_done = 0
 
-        # Run generation
-        outputs = llm.generate(requests)
+    output_dir = os.path.dirname(args.output_file)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+        
+    with open(args.output_file, "w", encoding="utf-8") as outfile:
+        # バッチでまとめて生成
+        for i in range(0, total, args.batch_size):
+            batch = tasks[i : i + args.batch_size]
 
-        # Write results
-        for out in outputs:
-            record = {
-                "task_id": out.request_id,
-                "generated": out.generated_text,
-            }
-            outfile.write(json.dumps(record, ensure_ascii=False) + "\n")
+            # vLLMは「プロンプトのリスト」を受け取る
+            prompts = []
+            task_ids = []
+            for entry in batch:
+                prompt = entry.get("src", entry.get("prompt", ""))
+                prompts.append(prompt)
+                task_ids.append(entry["task_id"])
 
-        # Progress log
-        elapsed = time.perf_counter() - start_time
-        logger.info(f"Processed {min(idx + args.batch_size, total)}/{total} tasks (elapsed: {elapsed:.1f}s)")
+            # 生成（出力は入力順に整列）
+            outputs = llm.generate(prompts, sampling_params=base_params)
 
-    outfile.close()
+            # 書き出し
+            for j, out in enumerate(outputs):
+                # out.outputs は候補のリスト（通常は1つ）:
+                text = out.outputs[0].text if out.outputs else ""
+                record = {
+                    "task_id": task_ids[j],
+                    "generated": text,
+                }
+                outfile.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+            n_done += len(batch)
+            elapsed = time.perf_counter() - start_time
+            logger.info(f"Processed {n_done}/{total} tasks (elapsed: {elapsed:.1f}s)")
+
     logger.info(f"All done. Results written to {args.output_file}")
 
 
