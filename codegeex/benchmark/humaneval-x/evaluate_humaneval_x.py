@@ -21,6 +21,7 @@ LANGUAGE_NAME = {
     "java"  : "Java",
     "js"    : "JavaScript",
     "python": "Python",
+    "rust"  : "Rust",
 }
 
 
