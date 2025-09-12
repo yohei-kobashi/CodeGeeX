@@ -7,9 +7,10 @@ import random
 import argparse
 import logging
 import json
+import urllib.request
+import urllib.error
 
 from codegeex.benchmark.utils import read_translation_dataset
-from vllm import LLM, SamplingParams
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -32,7 +33,79 @@ def add_args(parser):
     group.add_argument("--max-tokens", type=int, default=512)
     group.add_argument("--output-file", type=str, default="translations.jsonl")
     group.add_argument("--seed", type=int, default=42)
+    # When provided, use external vLLM OpenAI-compatible server instead of local vLLM
+    group.add_argument(
+        "--server-url",
+        type=str,
+        default=None,
+        help="Base URL of vLLM OpenAI server (e.g., http://localhost:8000/v1). If set, use HTTP API instead of local vLLM.",
+    )
+    group.add_argument(
+        "--api-key",
+        type=str,
+        default=os.environ.get("OPENAI_API_KEY", None),
+        help="Optional API key for the server (sent as Bearer token).",
+    )
+    group.add_argument(
+        "--request-timeout",
+        type=float,
+        default=120.0,
+        help="HTTP request timeout in seconds for server mode.",
+    )
     return parser
+
+
+def _call_vllm_server(base_url,
+                      model,
+                      prompt,
+                      *,
+                      temperature,
+                      top_p,
+                      top_k,
+                      max_tokens,
+                      stop,
+                      api_key,
+                      timeout):
+    """Call vLLM's OpenAI-compatible /completions endpoint for a single prompt.
+
+    Returns generated text or empty string on failure.
+    """
+    url = base_url.rstrip("/") + "/completions"
+    payload = {
+        "model": model,
+        "prompt": prompt,
+        "temperature": temperature,
+        "top_p": top_p,
+        "top_k": top_k,
+        "max_tokens": max_tokens,
+        "stop": stop,
+    }
+    data = json.dumps(payload).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            body = resp.read().decode("utf-8")
+            obj = json.loads(body)
+            # Expect OpenAI-style completions response
+            choices = obj.get("choices", [])
+            if choices:
+                # Some servers may include leading/trailing spaces/newlines; keep as-is
+                return choices[0].get("text", "") or ""
+    except urllib.error.HTTPError as e:
+        try:
+            err_body = e.read().decode("utf-8")
+        except Exception:
+            err_body = str(e)
+        logging.error(f"HTTPError from server: {e.code} {e.reason} body={err_body}")
+    except urllib.error.URLError as e:
+        logging.error(f"URLError contacting server: {e}")
+    except Exception as e:
+        logging.exception(f"Unexpected error contacting server: {e}")
+    return ""
 
 
 def main():
@@ -59,25 +132,39 @@ def main():
     total = len(tasks)
     logger.info(f"Loaded {len(entries)} problems, total tasks: {total}")
 
-    # Initialize vLLM (H200ならbf16推奨 / device指定は不要)
-    llm = LLM(
-        model=args.model_name_or_path,
-        tensor_parallel_size=1,
-        dtype="bfloat16",
-        gpu_memory_utilization=0.95,
-        kv_cache_dtype="fp8",
-        max_num_batched_tokens=16384,
-        max_num_seqs=args.batch_size,
-    )
+    use_server = args.server_url is not None and len(args.server_url.strip()) > 0
 
-    # 共通の SamplingParams
-    base_params = SamplingParams(
-        temperature=args.temperature,
-        top_p=args.top_p,
-        top_k=args.top_k,
-        max_tokens=args.max_tokens,
-        stop=["<|endoftext|>", "</s>", "<|EOT|>", "<|im_end|>"]
-    )
+    if not use_server:
+        # Delay-import vLLM only if using local inference
+        from vllm import LLM, SamplingParams
+        # Initialize vLLM (H200ならbf16推奨 / device指定は不要)
+        llm = LLM(
+            model=args.model_name_or_path,
+            tensor_parallel_size=1,
+            dtype="bfloat16",
+            gpu_memory_utilization=0.95,
+            kv_cache_dtype="fp8",
+            max_num_batched_tokens=16384,
+            max_num_seqs=args.batch_size,
+        )
+
+        # 共通の SamplingParams
+        base_params = SamplingParams(
+            temperature=args.temperature,
+            top_p=args.top_p,
+            top_k=args.top_k,
+            max_tokens=args.max_tokens,
+            stop=["<|endoftext|>", "</s>", "<|EOT|>", "<|im_end|>"]
+        )
+    else:
+        # In server mode, keep stop list as a simple Python list for HTTP payloads
+        base_params = {
+            "temperature": args.temperature,
+            "top_p": args.top_p,
+            "top_k": args.top_k,
+            "max_tokens": args.max_tokens,
+            "stop": ["<|endoftext|>", "</s>", "<|EOT|>", "<|im_end|>"]
+        }
 
     start_time = time.perf_counter()
     n_done = 0
@@ -99,18 +186,39 @@ def main():
                 prompts.append(prompt)
                 task_ids.append(entry["task_id"])
 
-            # 生成（出力は入力順に整列）
-            outputs = llm.generate(prompts, sampling_params=base_params)
+            if not use_server:
+                # 生成（出力は入力順に整列）
+                outputs = llm.generate(prompts, sampling_params=base_params)
 
-            # 書き出し
-            for j, out in enumerate(outputs):
-                # out.outputs は候補のリスト（通常は1つ）:
-                text = out.outputs[0].text if out.outputs else ""
-                record = {
-                    "task_id": task_ids[j],
-                    "generated": text,
-                }
-                outfile.write(json.dumps(record, ensure_ascii=False) + "\n")
+                # 書き出し
+                for j, out in enumerate(outputs):
+                    # out.outputs は候補のリスト（通常は1つ）:
+                    text = out.outputs[0].text if out.outputs else ""
+                    record = {
+                        "task_id": task_ids[j],
+                        "generated": text,
+                    }
+                    outfile.write(json.dumps(record, ensure_ascii=False) + "\n")
+            else:
+                # Server mode: call HTTP API for each prompt in the batch
+                for j, prompt in enumerate(prompts):
+                    text = _call_vllm_server(
+                        args.server_url,
+                        args.model_name_or_path,
+                        prompt,
+                        temperature=base_params["temperature"],
+                        top_p=base_params["top_p"],
+                        top_k=base_params["top_k"],
+                        max_tokens=base_params["max_tokens"],
+                        stop=base_params["stop"],
+                        api_key=args.api_key,
+                        timeout=args.request_timeout,
+                    )
+                    record = {
+                        "task_id": task_ids[j],
+                        "generated": text,
+                    }
+                    outfile.write(json.dumps(record, ensure_ascii=False) + "\n")
 
             n_done += len(batch)
             elapsed = time.perf_counter() - start_time
