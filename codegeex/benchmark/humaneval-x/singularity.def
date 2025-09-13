@@ -9,10 +9,15 @@ From: ubuntu:22.04
     export LC_ALL=C.UTF-8
     export WORKDIR=/workspace
     export PYTHONUNBUFFERED=1
-    # Ensure Python can import the repo package when running from
-    # /workspace (this file's directory: codegeex/benchmark/humaneval-x)
-    # Repo root is two levels up from here
-    export PYTHONPATH=/workspace/../..:$PYTHONPATH
+    # Bind the repository root to /workspace when running.
+    # Ensure Python can import the top-level codegeex package.
+    export PYTHONPATH=/workspace:$PYTHONPATH
+    # Ensure Node.js can resolve globally installed modules like js-md5.
+    export NODE_PATH=/usr/local/lib/node_modules
+
+%files
+    # Stage Python requirements used by the evaluator
+    codegeex/benchmark/humaneval-x/requirements.txt /opt/humanevalx/requirements.txt
 
 %post
     set -e
@@ -53,21 +58,17 @@ From: ubuntu:22.04
     rustup default stable
 
     # Python packages for evaluator
-    python3 -m pip install --no-cache-dir \
-        fire \
-        regex \
-        numpy \
-        tqdm
+    python3 -m pip install --no-cache-dir -r /opt/humanevalx/requirements.txt
 
     mkdir -p /workspace
 
 %runscript
-    # 実行前提：ホストのこのディレクトリ（codegeex/benchmark/humaneval-x）を
-    # -B <path>:/workspace にバインドし、同ディレクトリの evaluate_humaneval_x.py を実行。
-    # import の解決のため、PYTHONPATH をリポジトリルート（/workspace/../..）に通す。
+    # 実行前提：ホストのリポジトリルート（このファイルの2階層上）を
+    # -B <repo-root>:/workspace にバインドし、評価スクリプトを実行します。
+    # import 解決のため PYTHONPATH に /workspace（リポジトリルート）を通します。
     cd /workspace
-    export PYTHONPATH=/workspace/../..:${PYTHONPATH}
-    exec python3 evaluate_humaneval_x.py "$@"
+    export PYTHONPATH=/workspace:${PYTHONPATH}
+    exec python3 codegeex/benchmark/humaneval-x/evaluate_humaneval_x.py "$@"
 
 %labels
     Maintainer "you"

@@ -1,0 +1,6 @@
+fire
+regex
+numpy
+tqdm
+transformers
+

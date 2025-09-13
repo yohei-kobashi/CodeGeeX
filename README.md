@@ -226,3 +226,78 @@ If you find our work useful, please cite:
   year={2023}
 }
 ```
+
+## HumanEval-X 一括評価 (Singularity/Apptainer)
+
+HumanEval-X の各言語 (cpp, go, java, js, python, rust) に対して、生成結果の機能的正しさを一括で評価し、最後に CSV に集計するスクリプト `scripts/evaluate_humanevalx_all.sh` の使い方を説明します。
+
+### 前提条件
+
+- Singularity または Apptainer がホスト環境にインストール済み (`singularity` もしくは `apptainer` コマンドが使用可能)。
+- 評価用 SIF イメージが用意済み (例: `./humanevalx.sif`)。
+  - コンテナ内で `--input_file`, `--problem_file`, `--tmp_dir`, `--n_workers`, `--timeout` を受け取るエントリポイントが実行され、HumanEval-X の評価スクリプトが動く構成になっていること。
+- 本レポジトリの `codegeex/benchmark/humaneval-x` ディレクトリ配下に、各言語のデータファイルが存在すること。
+  - 例: `codegeex/benchmark/humaneval-x/python/data/humaneval_python.jsonl.gz` など。
+- 評価したい生成結果 (`.jsonl`) が、各言語配下の同一ディレクトリ名 (`<input_dir>`) に置かれていること。
+  - 例: `codegeex/benchmark/humaneval-x/python/<input_dir>/*.jsonl`
+
+### 使い方
+
+```
+bash scripts/evaluate_humanevalx_all.sh <input_dir> [sif_path] [n_workers] [timeout] [csv_out]
+```
+
+- 引数
+  - `<input_dir>`: 各言語配下に存在する評価対象ディレクトリ名。例:
+    - `codegeex/benchmark/humaneval-x/{cpp,go,java,js,python,rust}/<input_dir>/*.jsonl`
+  - `[sif_path]`: 使用する SIF イメージのパス (省略時: `./humanevalx.sif`)
+  - `[n_workers]`: 並列ワーカー数 (省略時: `64`)
+  - `[timeout]`: 1 テストあたりのタイムアウト秒 (省略時: `5`)
+  - `[csv_out]`: すべての結果を集約する CSV の出力先 (省略時: レポジトリ直下の `humanevalx_results.csv`)
+
+### 言語とディレクトリ構成
+
+スクリプトは次の言語を順に処理します: `cpp`, `go`, `java`, `js`, `python`, `rust`。
+
+各言語で次の構成が必要です。
+
+- 問題定義ファイル: `codegeex/benchmark/humaneval-x/<lang>/data/humaneval_<lang>.jsonl.gz`
+- 生成結果ファイル群: `codegeex/benchmark/humaneval-x/<lang>/<input_dir>/*.jsonl`
+
+ディレクトリやファイルが存在しない言語は自動的にスキップされます。
+
+### 実行例
+
+```
+# 例) 生成結果を langごとに runs/2024-09-01/ に配置した場合
+bash scripts/evaluate_humanevalx_all.sh runs/2024-09-01 ./humanevalx.sif 64 5 results_2024-09-01.csv
+```
+
+### 実行時の挙動
+
+- ホスト側の以下のディレクトリをコンテナにバインドします。
+  - `/workspace` → `codegeex/benchmark/humaneval-x`
+  - `/repo` → レポジトリルート (Python の `PYTHONPATH` に追加)
+- 各言語・各入力ファイルに対し、コンテナ内で評価を実行します。
+- 評価が完了すると、各入力ファイルの隣に `*_results.jsonl` (もしくは `*_results.jsonl.gz`) が生成されます。
+- 最後に、見つかったすべての `*_results.jsonl[.gz]` をホストの `python3` で集約し、`[csv_out]` で指定した CSV を出力します。
+
+### 出力 (CSV)
+
+集約 CSV には、概ね次の列が含まれます。
+
+- `language`: 言語 (cpp/go/java/js/python/rust)
+- `task_id`: タスク ID
+- `completion_id`: 生成 ID
+- `passed`: パスしたかどうか
+- `result`: 実行結果メッセージ等
+- `input_file`: 元の生成ファイルのパス
+- `results_file`: 評価結果 jsonl のパス
+
+### ヒント / トラブルシューティング
+
+- `singularity` も `apptainer` も見つからない場合は、これらをインストールし PATH を通してください。
+- SIF イメージがデフォルトの `./humanevalx.sif` にない場合は第 2 引数で指定してください。
+- CSV 集約にはホスト側の `python3` が必要です。未インストールの場合は CSV 出力でエラーになります。
+- `n_workers` や `timeout` はマシンや言語特性に合わせて調整してください。
+- 評価対象の言語ごとにディレクトリや問題ファイルがない場合、その言語は自動スキップされます。
