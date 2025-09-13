@@ -16,7 +16,12 @@ From: ubuntu:22.04
     export NODE_PATH=/usr/local/lib/node_modules
 
 %files
-    # (removed explicit file uploads to improve remote build robustness)
+    # Copy project requirements into the image at build time
+    requirements.txt /opt/humanevalx/requirements.txt
+
+%setup
+    # Ensure destination directory for copied files exists in image rootfs
+    mkdir -p "$SINGULARITY_ROOTFS/opt/humanevalx"
 
 %post
     set -eu
@@ -80,16 +85,8 @@ From: ubuntu:22.04
     retry apt-get install -y --no-install-recommends rustc cargo
     rm -rf /var/lib/apt/lists/*
 
-    # Write minimal Python requirements directly to the image to avoid %files upload
+    # Python packages for evaluator (from repository requirements copied via %files)
     mkdir -p /opt/humanevalx
-    cat > /opt/humanevalx/requirements.txt <<'REQS'
-fire
-regex
-numpy
-tqdm
-transformers
-REQS
-    # Python packages for evaluator
     retry python3 -m pip install --no-cache-dir -r /opt/humanevalx/requirements.txt
 
     mkdir -p /workspace
