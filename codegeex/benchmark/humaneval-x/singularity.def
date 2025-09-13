@@ -19,7 +19,7 @@ From: ubuntu:22.04
     # (removed explicit file uploads to improve remote build robustness)
 
 %post
-    set -euo pipefail
+    set -eu
     # Keep all apt operations noninteractive during build to avoid prompts
     export DEBIAN_FRONTEND=noninteractive
     export TZ=UTC
@@ -27,18 +27,22 @@ From: ubuntu:22.04
 
     # Simple retry helper for flaky network operations
     retry() {
-        local n=0
-        local try=5
-        local delay=3
-        until "$@"; do
+        r_n=0
+        r_try=5
+        r_delay=3
+        while true; do
+            "$@"
             exit_code=$?
-            n=$((n+1))
-            if [ $n -ge $try ]; then
-                echo "Command failed after $n attempts: $*" >&2
+            if [ $exit_code -eq 0 ]; then
+                return 0
+            fi
+            r_n=$((r_n+1))
+            if [ $r_n -ge $r_try ]; then
+                echo "Command failed after $r_n attempts: $*" >&2
                 return $exit_code
             fi
-            echo "Retry $n/$try after failure ($exit_code): $*" >&2
-            sleep $((delay*n))
+            echo "Retry $r_n/$r_try after failure ($exit_code): $*" >&2
+            sleep $((r_delay*r_n))
         done
     }
     retry apt-get update
