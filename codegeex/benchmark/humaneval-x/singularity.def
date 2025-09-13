@@ -16,8 +16,7 @@ From: ubuntu:22.04
     export NODE_PATH=/usr/local/lib/node_modules
 
 %files
-    # Stage Python requirements used by the evaluator
-    codegeex/benchmark/humaneval-x/requirements.txt /opt/humanevalx/requirements.txt
+    # (removed explicit file uploads to improve remote build robustness)
 
 %post
     set -euo pipefail
@@ -77,6 +76,15 @@ From: ubuntu:22.04
     retry apt-get install -y --no-install-recommends rustc cargo
     rm -rf /var/lib/apt/lists/*
 
+    # Write minimal Python requirements directly to the image to avoid %files upload
+    mkdir -p /opt/humanevalx
+    cat > /opt/humanevalx/requirements.txt <<'REQS'
+fire
+regex
+numpy
+tqdm
+transformers
+REQS
     # Python packages for evaluator
     retry python3 -m pip install --no-cache-dir -r /opt/humanevalx/requirements.txt
 
