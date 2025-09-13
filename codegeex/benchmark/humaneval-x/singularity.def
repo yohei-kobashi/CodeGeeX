@@ -20,7 +20,9 @@ From: ubuntu:22.04
     codegeex/benchmark/humaneval-x/requirements.txt /opt/humanevalx/requirements.txt
 
 %post
-    set -e
+    set -euo pipefail
+    # Keep all apt operations noninteractive during build to avoid prompts
+    export DEBIAN_FRONTEND=noninteractive
     apt-get update
     apt-get install -y --no-install-recommends \
         software-properties-common \
@@ -37,25 +39,24 @@ From: ubuntu:22.04
         pkg-config
     rm -rf /var/lib/apt/lists/*
 
-    # OpenJDK 18（PPA。安定性が必要なら Temurin に置き換え可）
-    add-apt-repository ppa:openjdk-r/ppa -y
+    # Use Ubuntu 22.04 default OpenJDK (17) to avoid PPA instability
     apt-get update
-    apt-get install -y --no-install-recommends openjdk-18-jdk
+    apt-get install -y --no-install-recommends openjdk-17-jdk
     rm -rf /var/lib/apt/lists/*
 
-    # Node.js 16 + pin to 16.14.0 + js-md5
+    # Node.js (install via NodeSource 16.x) + js-md5
     curl -fsSL https://deb.nodesource.com/setup_16.x | bash -
     apt-get update
     apt-get install -y --no-install-recommends nodejs
-    npm install -g n
-    n 16.14.0
+    npm config set fund false --global || true
+    npm config set audit false --global || true
     npm install -g js-md5@0.7.3
     rm -rf /var/lib/apt/lists/*
 
-    # Rust toolchain (for Rust problem evaluation via cargo)
-    curl https://sh.rustup.rs -sSf | sh -s -- -y
-    . /root/.cargo/env
-    rustup default stable
+    # Rust toolchain via Ubuntu packages (faster and more reliable on remote builders)
+    apt-get update
+    apt-get install -y --no-install-recommends rustc cargo
+    rm -rf /var/lib/apt/lists/*
 
     # Python packages for evaluator
     python3 -m pip install --no-cache-dir -r /opt/humanevalx/requirements.txt
