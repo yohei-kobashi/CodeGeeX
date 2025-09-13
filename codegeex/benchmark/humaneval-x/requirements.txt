@@ -3,4 +3,4 @@ regex
 numpy
 tqdm
 transformers
-
+torch
