@@ -8,7 +8,7 @@ import numpy as np
 
 from typing import *
 from tqdm.auto import tqdm
-from collections import defaultdict
+from collections import defaultdict, Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from codegeex.benchmark.utils import read_dataset, IMPORT_HELPER

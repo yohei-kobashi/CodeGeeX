@@ -19,8 +19,7 @@ set -euo pipefail
 # Notes:
 # - This script assumes the repository is checked out and that the SIF is already built.
 # - It binds the following into the container:
-#     /workspace -> codegeex/benchmark/humaneval-x
-#     /repo      -> repository root (for Python imports)
+#     /workspace -> repository root (for Python imports and runscript expectations)
 
 usage() {
   echo "Usage: $0 <input_dir> [sif_path] [n_workers] [timeout] [csv_out]" 1>&2
@@ -44,11 +43,11 @@ TIMEOUT="${4:-5}"
 # Resolve repo root from this script location (scripts/..)
 SCRIPT_DIR=$(cd -- "$(dirname -- "$0")" && pwd)
 REPO_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
-WS_DIR="$REPO_ROOT/codegeex/benchmark/humaneval-x"
+HUMX_DIR="$REPO_ROOT/codegeex/benchmark/humaneval-x"
 CSV_OUT="${5:-$REPO_ROOT/humanevalx_results.csv}"
 
-if [[ ! -d "$WS_DIR" ]]; then
-  echo "Error: workspace dir not found: $WS_DIR" 1>&2
+if [[ ! -d "$HUMX_DIR" ]]; then
+  echo "Error: humaneval-x dir not found: $HUMX_DIR" 1>&2
   exit 2
 fi
 
@@ -75,8 +74,8 @@ echo "Evaluating input_dir='$INPUT_DIR' across languages: ${langs[*]}"
 declare -a RESULTS_FILES=()
 
 for lang in "${langs[@]}"; do
-  DATA_FILE="$WS_DIR/$lang/data/humaneval_${lang}.jsonl.gz"
-  IN_DIR="$WS_DIR/$lang/$INPUT_DIR"
+  DATA_FILE="$HUMX_DIR/$lang/data/humaneval_${lang}.jsonl.gz"
+  IN_DIR="$HUMX_DIR/$lang/$INPUT_DIR"
 
   if [[ ! -d "$IN_DIR" ]]; then
     echo "[skip] $lang: input dir not found: $IN_DIR"
@@ -99,19 +98,17 @@ for lang in "${langs[@]}"; do
 
   for host_input in "${files[@]}"; do
     base=$(basename -- "$host_input")
-    container_input="/workspace/$lang/$INPUT_DIR/$base"
-    container_problem="/workspace/$lang/data/humaneval_${lang}.jsonl.gz"
+    container_input="/workspace/codegeex/benchmark/humaneval-x/$lang/$INPUT_DIR/$base"
+    container_problem="/workspace/codegeex/benchmark/humaneval-x/$lang/data/humaneval_${lang}.jsonl.gz"
 
     echo "  -> Evaluating: $host_input"
     set -x
     "$CTR" run \
-      -B "$WS_DIR":/workspace \
-      -B "$REPO_ROOT":/repo \
-      --env PYTHONPATH=/repo:\$PYTHONPATH \
+      -B "$REPO_ROOT":/workspace \
       "$SIF_PATH" \
       --input_file "$container_input" \
       --problem_file "$container_problem" \
-      --tmp_dir /workspace \
+      --tmp_dir /workspace/codegeex/benchmark/humaneval-x \
       --n_workers "$N_WORKERS" \
       --timeout "$TIMEOUT"
     set +x
