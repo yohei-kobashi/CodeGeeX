@@ -138,9 +138,12 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 5
 fi
 
-# Build a single CSV from all results files
+#! Build aggregated per-language pass@k CSV from all results files
 python3 - "$CSV_OUT" "${RESULTS_FILES[@]}" << 'PY'
-import sys, os, csv, json, gzip
+import sys, os, csv, json, gzip, math
+from collections import defaultdict
+
+LANG_CODES = ('cpp','go','java','js','python','rust')
 
 def iter_jsonl(path):
     if path.endswith('.gz'):
@@ -157,42 +160,80 @@ def iter_jsonl(path):
                     yield json.loads(line)
 
 def detect_lang(path):
-    # try to get segment after 'humaneval-x'
     parts = os.path.normpath(path).split(os.sep)
     if 'humaneval-x' in parts:
         idx = parts.index('humaneval-x')
         if idx + 1 < len(parts):
             return parts[idx+1]
-    for cand in ('cpp','go','java','js','python','rust'):
+    for cand in LANG_CODES:
         if f"{os.sep}{cand}{os.sep}" in path:
             return cand
     return ''
 
+def estimate_pass_at_k(num_samples_list, num_correct_list, k):
+    # Unbiased estimator from OpenAI Codex paper
+    def estimator(n, c, k):
+        n = int(n); c = int(c)
+        if n - c < k:
+            return 1.0
+        prod = 1.0
+        for x in range(n - c + 1, n + 1):
+            prod *= (1.0 - k / x)
+        return 1.0 - prod
+    return [estimator(n, c, k) for n, c in zip(num_samples_list, num_correct_list)]
+
 out_csv = sys.argv[1]
 in_files = sys.argv[2:]
 
-fields = [
-    'language','task_id','completion_id','passed','result',
-    'input_file','results_file'
-]
+# Accumulate totals per language and task
+# structure: lang -> task_id -> {'total': n, 'correct': c}
+agg = {lc: defaultdict(lambda: {'total':0,'correct':0}) for lc in LANG_CODES}
 
+for rf in in_files:
+    lang = detect_lang(rf)
+    if not lang:
+        continue
+    for rec in iter_jsonl(rf):
+        task_id = rec.get('task_id','')
+        passed = bool(rec.get('passed', False))
+        slot = agg[lang][task_id]
+        slot['total'] += 1
+        slot['correct'] += 1 if passed else 0
+
+rows = []
+for lang, tasks in agg.items():
+    if not tasks:
+        continue
+    totals = [v['total'] for v in tasks.values()]
+    corrects = [v['correct'] for v in tasks.values()]
+    num_tasks = len(totals)
+    sum_samples = sum(totals)
+    sum_correct = sum(corrects)
+    metrics = {}
+    for k in (1, 10, 100):
+        if all(t >= k for t in totals):
+            vals = estimate_pass_at_k(totals, corrects, k)
+            metrics[f'pass@{k}'] = sum(vals) / len(vals)
+        else:
+            metrics[f'pass@{k}'] = ''  # insufficient samples for this k
+    rows.append({
+        'language': lang,
+        'num_tasks': num_tasks,
+        'total_samples': sum_samples,
+        'correct_samples': sum_correct,
+        'pass@1': metrics['pass@1'],
+        'pass@10': metrics['pass@10'],
+        'pass@100': metrics['pass@100'],
+    })
+
+fields = ['language','num_tasks','total_samples','correct_samples','pass@1','pass@10','pass@100']
 with open(out_csv, 'w', newline='', encoding='utf-8') as wf:
     writer = csv.DictWriter(wf, fieldnames=fields)
     writer.writeheader()
-    for rf in in_files:
-        lang = detect_lang(rf)
-        for rec in iter_jsonl(rf):
-            writer.writerow({
-                'language': lang,
-                'task_id': rec.get('task_id',''),
-                'completion_id': rec.get('completion_id',''),
-                'passed': rec.get('passed',''),
-                'result': rec.get('result',''),
-                'input_file': rf.replace('_results.jsonl','').replace('.gz',''),
-                'results_file': rf,
-            })
+    for r in rows:
+        writer.writerow(r)
 
-print(f"Wrote CSV: {out_csv}")
+print(f"Wrote aggregated CSV: {out_csv}")
 PY
 
 echo "CSV written to: $CSV_OUT"
