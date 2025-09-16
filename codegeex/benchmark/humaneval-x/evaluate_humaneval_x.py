@@ -25,6 +25,43 @@ LANGUAGE_NAME = {
 }
 
 
+def _extract_translation_target(path: str) -> Optional[str]:
+    """Extract target language token from filename/path.
+
+    Supports patterns like:
+      - "...-to-<tgt>-..."
+      - "..._to_<tgt>..."
+    Returns normalized language in {cpp, go, java, js, python, rust} or None.
+    """
+    s = path.lower()
+    # Try hyphen/underscore variants: capture letters and '+' (for c++)
+    m = regex.search(r"[-_]to[-_]([a-z\+]+)", s)
+    if not m:
+        return None
+    raw = m.group(1)
+    # Normalization map for common aliases
+    alias = {
+        "javascript": "js",
+        "js": "js",
+        "python": "python",
+        "py": "python",
+        "c++": "cpp",
+        "cplusplus": "cpp",
+        "cpp": "cpp",
+        "go": "go",
+        "java": "java",
+        "rust": "rust",
+    }
+    # Direct match first
+    if raw in alias:
+        return alias[raw]
+    # Fallback: substring match against known aliases
+    for cand in ["cpp", "c++", "cplusplus", "go", "java", "javascript", "js", "python", "py", "rust"]:
+        if cand in raw:
+            return alias.get(cand, cand)
+    return None
+
+
 def process_humaneval_test(sample, problems, example_test=False):
     task_id = sample["task_id"]
     language = task_id.split("/")[0].lower()
@@ -129,10 +166,8 @@ def evaluate_functional_correctness(
     if "/codegeex/benchmark/humaneval-x/" in input_file:
         test_groundtruth = True
 
-    if "-to-" in input_file:
-        translation_mode = True
-    else:
-        translation_mode = False
+    tgt_lang = _extract_translation_target(input_file)
+    translation_mode = tgt_lang is not None
 
     with ThreadPoolExecutor(max_workers=n_workers) as executor:
 
@@ -165,11 +200,13 @@ def evaluate_functional_correctness(
                 lang = task_id.split("/")[0].lower()
                 if translation_mode:
                     task_id = sample["task_id"].split("/")[-1]
-                    lang = regex.findall("-to-.*-", input_file)[0].split("-to-")[-1].rstrip("-")
-                    for l in LANGUAGE_NAME:
-                        if l in lang:
-                            lang = l
-                            break
+                    lang = tgt_lang
+                    # Safety: ensure lang is one of supported keys
+                    if lang not in LANGUAGE_NAME:
+                        for l in LANGUAGE_NAME:
+                            if l in (lang or ""):
+                                lang = l
+                                break
                     task_id = f"{LANGUAGE_NAME[lang]}/{task_id}"
                 if lang == "javascript":
                     lang = "js"
