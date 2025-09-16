@@ -119,6 +119,17 @@ for lang in "${langs[@]}"; do
   shopt -s nullglob
   files=("$IN_DIR"/*.jsonl)
   shopt -u nullglob
+  # Exclude any already-produced results files (e.g., *_results.jsonl)
+  if [[ ${#files[@]} -gt 0 ]]; then
+    filtered=()
+    for f in "${files[@]}"; do
+      case "$f" in
+        *results.jsonl) continue ;;
+      esac
+      filtered+=("$f")
+    done
+    files=("${filtered[@]}")
+  fi
   if [[ ${#files[@]} -eq 0 ]]; then
     echo "[skip] $lang: no .jsonl files under $IN_DIR"
     continue
@@ -183,6 +194,17 @@ for lang in "${langs[@]}"; do
   shopt -s nullglob
   files=("$IN_DIR"/*.jsonl)
   shopt -u nullglob
+  # Exclude any results files from CSV enumeration as they are not inputs
+  if [[ ${#files[@]} -gt 0 ]]; then
+    filtered=()
+    for f in "${files[@]}"; do
+      case "$f" in
+        *results.jsonl) continue ;;
+      esac
+      filtered+=("$f")
+    done
+    files=("${filtered[@]}")
+  fi
   if [[ ${#files[@]} -eq 0 ]]; then
     continue
   fi
@@ -198,28 +220,52 @@ for lang in "${langs[@]}"; do
     run_log="${host_input%.jsonl}.log"
     pass1=""; pass10=""; pass100=""
     if [[ -f "$run_log" ]]; then
-      # Parse pass@k dict from evaluator stdout log
+      # Parse pass@k dict from evaluator stdout log; fallback to pass@1-only patterns
       csv_vals=$(python3 - "$run_log" << 'PY'
 import sys, ast, re
 text = open(sys.argv[1], 'r', encoding='utf-8', errors='ignore').read().splitlines()
-cand=None
+
+# Try to find a printed dict line first (from print(pass_at_k))
+dict_str = None
 for line in reversed(text):
     if 'pass@' in line and '{' in line and '}' in line:
-        m=re.search(r'\{.*\}', line)
-        cand=m.group(0) if m else line.strip()
+        m = re.search(r'\{.*\}', line)
+        if m:
+            dict_str = m.group(0)
+        else:
+            dict_str = line.strip()
         break
-if cand is None:
-    print(',,')
-    sys.exit(0)
-try:
-    d=ast.literal_eval(cand)
-except Exception:
-    print(',,')
-    sys.exit(0)
-def g(k):
-    v=d.get(k, '')
-    return f"{v:.6f}" if isinstance(v,float) else ('' if v is None else str(v))
-print(f"{g('pass@1')},{g('pass@10')},{g('pass@100')}")
+vals = {'pass@1': '', 'pass@10': '', 'pass@100': ''}
+if dict_str is not None:
+    try:
+        d = ast.literal_eval(dict_str)
+        for k in list(vals.keys()):
+            if k in d:
+                v = d[k]
+                if isinstance(v, float):
+                    vals[k] = f"{v:.6f}"
+                else:
+                    try:
+                        vals[k] = f"{float(v):.6f}"
+                    except Exception:
+                        vals[k] = str(v)
+    except Exception:
+        pass
+
+# Fallback: search explicit pass@1 pattern if dict was not found or parsing failed
+if not vals['pass@1']:
+    # Accept formats like: pass@1: 0.123, 'pass@1': 0.123, pass@1=0.123, pass@1 -> 0.123
+    pat = re.compile(r"pass@1['\"]?\s*[:=\-\>]?\s*([0-9]*\.?[0-9]+(?:[eE][+-]?\d+)?)")
+    for line in reversed(text):
+        m = pat.search(line)
+        if m:
+            try:
+                vals['pass@1'] = f"{float(m.group(1)):.6f}"
+            except Exception:
+                vals['pass@1'] = m.group(1)
+            break
+
+print(f"{vals['pass@1']},{vals['pass@10']},{vals['pass@100']}")
 PY
 )
       echo "$lang,$host_input,$csv_vals" >> "$CSV_OUT"
