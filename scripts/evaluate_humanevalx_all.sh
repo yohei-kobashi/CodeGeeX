@@ -102,6 +102,9 @@ detect_src_tgt() {
 
 echo "Evaluating input_dir='$INPUT_DIR' across languages: ${langs[*]}"
 
+# Prepare CSV header (truncate if exists)
+echo "language,input_file,pass@1,pass@10,pass@100" > "$CSV_OUT"
+
 
 for lang in "${langs[@]}"; do
   DATA_FILE="$HUMX_DIR/$lang/data/humaneval_${lang}.jsonl.gz"
@@ -161,8 +164,9 @@ for lang in "${langs[@]}"; do
 
     echo "  -> Evaluating: $host_input"
     log_file="${host_input%.jsonl}.log"
+    # Capture evaluator CSV row from stdout; stream logs (stderr) to both console and log file
     set -x
-    "$CTR" run \
+    row=$("$CTR" run \
       -B "$REPO_ROOT":/workspace \
       "$SIF_PATH" \
       --input_file "$container_input" \
@@ -170,108 +174,13 @@ for lang in "${langs[@]}"; do
       --tmp_dir /workspace/codegeex/benchmark/humaneval-x \
       --n_workers "$N_WORKERS" \
       --timeout "$TIMEOUT" \
-      2>&1 | tee "$log_file"
+      2> >(tee "$log_file" >&2))
     set +x
-
-    # Record expected results file path on host
-  done
-done
-
-echo "All evaluations finished. Building CSV from evaluator stdout..."
-
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "Error: python3 is required on host to build CSV '$CSV_OUT'" 1>&2
-  exit 5
-fi
-
-# Header for the CSV
-echo "language,input_file,pass@1,pass@10,pass@100" > "$CSV_OUT"
-
-# Re-run detections to append rows for entries we processed in this session.
-# We tracked evaluated files implicitly; reconstruct by scanning per-language dir.
-for lang in "${langs[@]}"; do
-  IN_DIR="$HUMX_DIR/$lang/$INPUT_DIR"
-  shopt -s nullglob
-  files=("$IN_DIR"/*.jsonl)
-  shopt -u nullglob
-  # Exclude any results files from CSV enumeration as they are not inputs
-  if [[ ${#files[@]} -gt 0 ]]; then
-    filtered=()
-    for f in "${files[@]}"; do
-      case "$f" in
-        *results.jsonl) continue ;;
-      esac
-      filtered+=("$f")
-    done
-    files=("${filtered[@]}")
-  fi
-  if [[ ${#files[@]} -eq 0 ]]; then
-    continue
-  fi
-  for host_input in "${files[@]}"; do
-    base=$(basename -- "$host_input")
-    # For each input, find the latest corresponding log captured beside results if present
-    # Our execution didn't persist logs; so extract pass@k by re-parsing the most recent run output if available.
-    # As a fallback, parse the results file's sibling stdout if user used tee externally.
-    # If not found, attempt a heuristic: look into a cached log under /tmp if created earlier.
-    # Since reliable logs may not exist, we instead parse the evaluator-produced *_results.jsonl's directory
-    # marker to decide row presence, but leave metrics blank if stdout unavailable.
-    # Try to locate a saved run log next to results file with .log extension
-    run_log="${host_input%.jsonl}.log"
-    pass1=""; pass10=""; pass100=""
-    if [[ -f "$run_log" ]]; then
-      # Parse pass@k dict from evaluator stdout log; fallback to pass@1-only patterns
-      csv_vals=$(python3 - "$run_log" << 'PY'
-import sys, ast, re
-text = open(sys.argv[1], 'r', encoding='utf-8', errors='ignore').read().splitlines()
-
-# Try to find a printed dict line first (from print(pass_at_k))
-dict_str = None
-for line in reversed(text):
-    if 'pass@' in line and '{' in line and '}' in line:
-        m = re.search(r'\{.*\}', line)
-        if m:
-            dict_str = m.group(0)
-        else:
-            dict_str = line.strip()
-        break
-vals = {'pass@1': '', 'pass@10': '', 'pass@100': ''}
-if dict_str is not None:
-    try:
-        d = ast.literal_eval(dict_str)
-        for k in list(vals.keys()):
-            if k in d:
-                v = d[k]
-                if isinstance(v, float):
-                    vals[k] = f"{v:.6f}"
-                else:
-                    try:
-                        vals[k] = f"{float(v):.6f}"
-                    except Exception:
-                        vals[k] = str(v)
-    except Exception:
-        pass
-
-# Fallback: search explicit pass@1 pattern if dict was not found or parsing failed
-if not vals['pass@1']:
-    # Accept formats like: pass@1: 0.123, 'pass@1': 0.123, pass@1=0.123, pass@1 -> 0.123
-    pat = re.compile(r"pass@1['\"]?\s*[:=\-\>]?\s*([0-9]*\.?[0-9]+(?:[eE][+-]?\d+)?)")
-    for line in reversed(text):
-        m = pat.search(line)
-        if m:
-            try:
-                vals['pass@1'] = f"{float(m.group(1)):.6f}"
-            except Exception:
-                vals['pass@1'] = m.group(1)
-            break
-
-print(f"{vals['pass@1']},{vals['pass@10']},{vals['pass@100']}")
-PY
-)
-      echo "$lang,$host_input,$csv_vals" >> "$CSV_OUT"
+    # Append CSV row (fallback to empty metrics if nothing captured)
+    if [[ -n "$row" ]]; then
+      echo "$row" >> "$CSV_OUT"
     else
-      # No log found; write row with empty metrics
-      echo "$lang,$host_input,,," >> "$CSV_OUT"
+      echo "$problem_lang,$container_input,,," >> "$CSV_OUT"
     fi
   done
 done

@@ -134,6 +134,31 @@ def stream_jsonl_all(filename: str) -> Iterable[Dict]:
     return results
 
 
+def _lang_from_problem_file(problem_file: str) -> Optional[str]:
+    """Infer target language key from problem_file path.
+
+    Expected patterns like .../humaneval_<lang>.jsonl.gz
+    Returns normalized key in {cpp, go, java, js, python, rust} or None.
+    """
+    s = (problem_file or "").lower()
+    m = regex.search(r"humaneval[_-]([a-z0-9\+]+)\.jsonl(\.gz)?$", s)
+    if not m:
+        return None
+    raw = m.group(1)
+    return {
+        "javascript": "js",
+        "js": "js",
+        "python": "python",
+        "py": "python",
+        "c++": "cpp",
+        "cplusplus": "cpp",
+        "cpp": "cpp",
+        "go": "go",
+        "java": "java",
+        "rust": "rust",
+    }.get(raw, raw)
+
+
 def evaluate_functional_correctness(
         input_file: str = None,
         tmp_dir: str = "./",
@@ -146,7 +171,7 @@ def evaluate_functional_correctness(
         example_test: bool = False,
 ):
     if example_test:
-        print("Example test...")
+        print("Example test...", file=sys.stderr)
 
     problems = read_dataset(problem_file,
                             dataset_type="humaneval")
@@ -177,7 +202,7 @@ def evaluate_functional_correctness(
         results = defaultdict(list)
 
         if test_groundtruth:
-            print("Testing ground truth...")
+            print("Testing ground truth...", file=sys.stderr)
             for sample in tqdm(problems.values()):
                 task_id = sample["task_id"]
                 lang = task_id.split("/")[0].lower()
@@ -194,7 +219,7 @@ def evaluate_functional_correctness(
                 completion_id[task_id] += 1
                 n_samples += 1
         else:
-            print("Reading samples...")
+            print("Reading samples...", file=sys.stderr)
             for sample in tqdm(sample_jsonl):
                 task_id = sample["task_id"]
                 lang = task_id.split("/")[0].lower()
@@ -225,13 +250,13 @@ def evaluate_functional_correctness(
                 completion_id[task_id] += 1
                 n_samples += 1
 
-        print(completion_id)
+        print(completion_id, file=sys.stderr)
         if len(completion_id) == len(problems):
             evaluate_pass_at_k = True
         else:
             evaluate_pass_at_k = False
 
-        print("Running test suites...")
+        print("Running test suites...", file=sys.stderr)
         for future in tqdm(as_completed(futures), total=len(futures)):
             result = future.result()
             results[result["task_id"]].append((result["completion_id"], result))
@@ -244,16 +269,17 @@ def evaluate_functional_correctness(
         correct.append(sum(passed))
     total = np.array(total)
     correct = np.array(correct)
+    pass_at_k = {}
     if evaluate_pass_at_k:
         ks = k
-        pass_at_k = {f"pass@{k}": estimate_pass_at_k(total, correct, k).mean()
-                     for k in ks if (total >= k).all()}
-        print(pass_at_k)
+        pass_at_k = {f"pass@{kk}": estimate_pass_at_k(total, correct, kk).mean()
+                     for kk in ks if (total >= kk).all()}
     else:
-        print("Total:", np.sum(total))
-        print("Correct:", np.sum(correct))
+        # Keep totals on stderr for diagnostics without polluting stdout CSV
+        print("Total:", np.sum(total), file=sys.stderr)
+        print("Correct:", np.sum(correct), file=sys.stderr)
 
-    print("Writing to: ", out_file)
+    print("Writing to: ", out_file, file=sys.stderr)
     if out_file.endswith(".gz"):
         fp = gzip.GzipFile(fileobj=open(out_file, "wb"), mode="wb")
         for res in results.values():
@@ -266,7 +292,24 @@ def evaluate_functional_correctness(
                 fp.write(json.dumps(r[1]) + "\n")
     fp.close()
 
-    print("Evaluation finished.")
+    # Compose CSV row for stdout; shell will add header.
+    # language: infer from problem_file; input_file: as provided; metrics: formatted or blank.
+    lang_key = _lang_from_problem_file(problem_file) or ""
+    def fmt(v):
+        try:
+            return f"{float(v):.6f}"
+        except Exception:
+            return ""
+    csv_vals = [
+        lang_key,
+        input_file or "",
+        fmt(pass_at_k.get("pass@1", "")),
+        fmt(pass_at_k.get("pass@10", "")),
+        fmt(pass_at_k.get("pass@100", "")),
+    ]
+    # Only CSV row to stdout
+    print(",".join(csv_vals))
+    print("Evaluation finished.", file=sys.stderr)
 
 
 def main():
