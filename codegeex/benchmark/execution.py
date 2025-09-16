@@ -277,7 +277,13 @@ def check_correctness(
             # Pass OR Fail compilation
             log_filename: str = file_prefix + ".jsonl"
             log_path: str = os.path.join(RUST_LOGS, log_filename)
-            cargo_check: str = "cargo check --bin " + file_prefix + " --message-format json >> " + log_path
+            cargo_check: str = (
+                "cargo check --bin "
+                + file_prefix
+                + " --message-format json >> "
+                + log_path
+                + " 2>&1"
+            )
             # Compilation build status
             returned_val_compilation: int
             
@@ -294,7 +300,13 @@ def check_correctness(
             if returned_val_compilation == 0:
 
                 #Execution pipeline
-                cargo_test: str = "cargo test --bin " +file_prefix+ " --message-format json >> " + log_path
+                cargo_test: str = (
+                    "cargo test --bin "
+                    + file_prefix
+                    + " --message-format json >> "
+                    + log_path
+                    + " 2>&1"
+                )
                 returned_val_execution = os.system(cargo_test)
                 
                 if returned_val_execution == 0:

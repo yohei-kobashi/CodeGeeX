@@ -175,16 +175,19 @@ public class Main {
 def main():
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
     tmp_root = os.path.join(repo_root, "codegeex", "benchmark", "humaneval-x")
-    timeout = 5.0
+    # Per-language timeouts: Rust builds/tests can take longer on first run.
+    default_timeout = 5.0
+    rust_timeout = float(os.environ.get("SMOKE_RUST_TIMEOUT", "30"))
 
     print("language,case,passed,result")
     for lang in LANGS:
         ok, ng = samples_for_language(lang)
+        to = rust_timeout if lang == "rust" else default_timeout
         # pass case
-        r_ok = check_correctness(ok["task_id"], ok, lang, timeout=timeout, tmp_dir=tmp_root, completion_id=0)
+        r_ok = check_correctness(ok["task_id"], ok, lang, timeout=to, tmp_dir=tmp_root, completion_id=0)
         print(f"{lang},pass_case,{str(r_ok['passed']).lower()},{r_ok['result']}")
         # fail case
-        r_ng = check_correctness(ng["task_id"], ng, lang, timeout=timeout, tmp_dir=tmp_root, completion_id=1)
+        r_ng = check_correctness(ng["task_id"], ng, lang, timeout=to, tmp_dir=tmp_root, completion_id=1)
         print(f"{lang},fail_case,{str(r_ng['passed']).lower()},{r_ng['result']}")
 
 
