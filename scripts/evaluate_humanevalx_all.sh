@@ -68,10 +68,40 @@ fi
 
 langs=(cpp go java js python rust)
 
+# Normalize language token to one of: cpp, go, java, js, python, rust
+norm_lang() {
+  local l=${1,,}
+  case "$l" in
+    js|javascript) echo js ;;
+    py|python) echo python ;;
+    c++|cplusplus|cpp) echo cpp ;;
+    golang|go) echo go ;;
+    java) echo java ;;
+    rust) echo rust ;;
+    *) echo "$l" ;;
+  esac
+}
+
+# Detect translation src/target from filename
+# Supports patterns like: foo-python-to-java-bar.jsonl, foo_python_to_java.jsonl, etc.
+detect_src_tgt() {
+  local base="$1"
+  # Strip directory
+  base=$(basename -- "$base")
+  # Try hyphen or underscore variants
+  if [[ "$base" =~ ([A-Za-z0-9\+]+)[-_]to[-_]+([A-Za-z0-9\+]+) ]]; then
+    local src="$(norm_lang "${BASH_REMATCH[1]}")"
+    local tgt="$(norm_lang "${BASH_REMATCH[2]}")"
+    echo "$src $tgt"
+    return 0
+  fi
+  # Not a translation filename
+  echo " "
+  return 1
+}
+
 echo "Evaluating input_dir='$INPUT_DIR' across languages: ${langs[*]}"
 
-# Collect produced result files to aggregate later
-declare -a RESULTS_FILES=()
 
 for lang in "${langs[@]}"; do
   DATA_FILE="$HUMX_DIR/$lang/data/humaneval_${lang}.jsonl.gz"
@@ -99,9 +129,27 @@ for lang in "${langs[@]}"; do
   for host_input in "${files[@]}"; do
     base=$(basename -- "$host_input")
     container_input="/workspace/codegeex/benchmark/humaneval-x/$lang/$INPUT_DIR/$base"
-    container_problem="/workspace/codegeex/benchmark/humaneval-x/$lang/data/humaneval_${lang}.jsonl.gz"
+    # Determine target language from filename if it's a translation; otherwise default to dir language
+    read -r src_lang tgt_lang < <(detect_src_tgt "$base" || true)
+    if [[ -n "$tgt_lang" ]]; then
+      problem_lang="$tgt_lang"
+      # Optional sanity check: warn if src_lang differs from directory name
+      if [[ -n "$src_lang" && "$src_lang" != "$lang" ]]; then
+        echo "[warn] filename src='$src_lang' differs from dir lang='$lang' for $host_input" 1>&2
+      fi
+    else
+      problem_lang="$lang"
+    fi
+
+    container_problem="/workspace/codegeex/benchmark/humaneval-x/$problem_lang/data/humaneval_${problem_lang}.jsonl.gz"
+
+    if [[ ! -f "$HUMX_DIR/$problem_lang/data/humaneval_${problem_lang}.jsonl.gz" ]]; then
+      echo "[skip] $lang: problem file for target '$problem_lang' not found: $HUMX_DIR/$problem_lang/data/humaneval_${problem_lang}.jsonl.gz" 1>&2
+      continue
+    fi
 
     echo "  -> Evaluating: $host_input"
+    log_file="${host_input%.jsonl}.log"
     set -x
     "$CTR" run \
       -B "$REPO_ROOT":/workspace \
@@ -110,130 +158,76 @@ for lang in "${langs[@]}"; do
       --problem_file "$container_problem" \
       --tmp_dir /workspace/codegeex/benchmark/humaneval-x \
       --n_workers "$N_WORKERS" \
-      --timeout "$TIMEOUT"
+      --timeout "$TIMEOUT" \
+      2>&1 | tee "$log_file"
     set +x
 
     # Record expected results file path on host
-    host_results_file="${host_input%.jsonl}_results.jsonl"
-    if [[ -f "$host_results_file" ]]; then
-      RESULTS_FILES+=("$host_results_file")
-    else
-      # Also check for gz in case inputs were gzipped
-      if [[ -f "${host_results_file}.gz" ]]; then
-        RESULTS_FILES+=("${host_results_file}.gz")
-      fi
-    fi
   done
 done
 
-echo "All evaluations finished. Aggregating to CSV..."
-
-if [[ ${#RESULTS_FILES[@]} -eq 0 ]]; then
-  echo "Warning: no *_results.jsonl files found to aggregate." 1>&2
-  exit 0
-fi
+echo "All evaluations finished. Building CSV from evaluator stdout..."
 
 if ! command -v python3 >/dev/null 2>&1; then
   echo "Error: python3 is required on host to build CSV '$CSV_OUT'" 1>&2
   exit 5
 fi
 
-#! Build aggregated per-language pass@k CSV from all results files
-python3 - "$CSV_OUT" "${RESULTS_FILES[@]}" << 'PY'
-import sys, os, csv, json, gzip, math
-from collections import defaultdict
+# Header for the CSV
+echo "language,input_file,pass@1,pass@10,pass@100" > "$CSV_OUT"
 
-LANG_CODES = ('cpp','go','java','js','python','rust')
-
-def iter_jsonl(path):
-    if path.endswith('.gz'):
-        with gzip.open(path, 'rt', encoding='utf-8') as f:
-            for line in f:
-                line=line.strip()
-                if line:
-                    yield json.loads(line)
-    else:
-        with open(path, 'r', encoding='utf-8') as f:
-            for line in f:
-                line=line.strip()
-                if line:
-                    yield json.loads(line)
-
-def detect_lang(path):
-    parts = os.path.normpath(path).split(os.sep)
-    if 'humaneval-x' in parts:
-        idx = parts.index('humaneval-x')
-        if idx + 1 < len(parts):
-            return parts[idx+1]
-    for cand in LANG_CODES:
-        if f"{os.sep}{cand}{os.sep}" in path:
-            return cand
-    return ''
-
-def estimate_pass_at_k(num_samples_list, num_correct_list, k):
-    # Unbiased estimator from OpenAI Codex paper
-    def estimator(n, c, k):
-        n = int(n); c = int(c)
-        if n - c < k:
-            return 1.0
-        prod = 1.0
-        for x in range(n - c + 1, n + 1):
-            prod *= (1.0 - k / x)
-        return 1.0 - prod
-    return [estimator(n, c, k) for n, c in zip(num_samples_list, num_correct_list)]
-
-out_csv = sys.argv[1]
-in_files = sys.argv[2:]
-
-# Accumulate totals per language and task
-# structure: lang -> task_id -> {'total': n, 'correct': c}
-agg = {lc: defaultdict(lambda: {'total':0,'correct':0}) for lc in LANG_CODES}
-
-for rf in in_files:
-    lang = detect_lang(rf)
-    if not lang:
-        continue
-    for rec in iter_jsonl(rf):
-        task_id = rec.get('task_id','')
-        passed = bool(rec.get('passed', False))
-        slot = agg[lang][task_id]
-        slot['total'] += 1
-        slot['correct'] += 1 if passed else 0
-
-rows = []
-for lang, tasks in agg.items():
-    if not tasks:
-        continue
-    totals = [v['total'] for v in tasks.values()]
-    corrects = [v['correct'] for v in tasks.values()]
-    num_tasks = len(totals)
-    sum_samples = sum(totals)
-    sum_correct = sum(corrects)
-    metrics = {}
-    for k in (1, 10, 100):
-        if all(t >= k for t in totals):
-            vals = estimate_pass_at_k(totals, corrects, k)
-            metrics[f'pass@{k}'] = sum(vals) / len(vals)
-        else:
-            metrics[f'pass@{k}'] = ''  # insufficient samples for this k
-    rows.append({
-        'language': lang,
-        'num_tasks': num_tasks,
-        'total_samples': sum_samples,
-        'correct_samples': sum_correct,
-        'pass@1': metrics['pass@1'],
-        'pass@10': metrics['pass@10'],
-        'pass@100': metrics['pass@100'],
-    })
-
-fields = ['language','num_tasks','total_samples','correct_samples','pass@1','pass@10','pass@100']
-with open(out_csv, 'w', newline='', encoding='utf-8') as wf:
-    writer = csv.DictWriter(wf, fieldnames=fields)
-    writer.writeheader()
-    for r in rows:
-        writer.writerow(r)
-
-print(f"Wrote aggregated CSV: {out_csv}")
+# Re-run detections to append rows for entries we processed in this session.
+# We tracked evaluated files implicitly; reconstruct by scanning per-language dir.
+for lang in "${langs[@]}"; do
+  IN_DIR="$HUMX_DIR/$lang/$INPUT_DIR"
+  shopt -s nullglob
+  files=("$IN_DIR"/*.jsonl)
+  shopt -u nullglob
+  if [[ ${#files[@]} -eq 0 ]]; then
+    continue
+  fi
+  for host_input in "${files[@]}"; do
+    base=$(basename -- "$host_input")
+    # For each input, find the latest corresponding log captured beside results if present
+    # Our execution didn't persist logs; so extract pass@k by re-parsing the most recent run output if available.
+    # As a fallback, parse the results file's sibling stdout if user used tee externally.
+    # If not found, attempt a heuristic: look into a cached log under /tmp if created earlier.
+    # Since reliable logs may not exist, we instead parse the evaluator-produced *_results.jsonl's directory
+    # marker to decide row presence, but leave metrics blank if stdout unavailable.
+    # Try to locate a saved run log next to results file with .log extension
+    run_log="${host_input%.jsonl}.log"
+    pass1=""; pass10=""; pass100=""
+    if [[ -f "$run_log" ]]; then
+      # Parse pass@k dict from evaluator stdout log
+      csv_vals=$(python3 - "$run_log" << 'PY'
+import sys, ast, re
+text = open(sys.argv[1], 'r', encoding='utf-8', errors='ignore').read().splitlines()
+cand=None
+for line in reversed(text):
+    if 'pass@' in line and '{' in line and '}' in line:
+        m=re.search(r'\{.*\}', line)
+        cand=m.group(0) if m else line.strip()
+        break
+if cand is None:
+    print(',,')
+    sys.exit(0)
+try:
+    d=ast.literal_eval(cand)
+except Exception:
+    print(',,')
+    sys.exit(0)
+def g(k):
+    v=d.get(k, '')
+    return f"{v:.6f}" if isinstance(v,float) else ('' if v is None else str(v))
+print(f"{g('pass@1')},{g('pass@10')},{g('pass@100')}")
 PY
+)
+      echo "$lang,$host_input,$csv_vals" >> "$CSV_OUT"
+    else
+      # No log found; write row with empty metrics
+      echo "$lang,$host_input,,," >> "$CSV_OUT"
+    fi
+  done
+done
 
 echo "CSV written to: $CSV_OUT"
