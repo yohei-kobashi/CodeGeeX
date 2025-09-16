@@ -99,7 +99,11 @@ int main() {
 }
 """.strip()
     elif lang == "rust":
+        # The executor first runs `cargo check --bin <name>` which requires a main() for bin targets.
+        # Provide an empty main alongside tests.
         pass_code = """
+fn main() {}
+
 pub fn add(a: i32, b: i32) -> i32 { a + b }
 
 #[cfg(test)]
@@ -112,6 +116,8 @@ mod tests {
 }
 """.strip()
         fail_code = """
+fn main() {}
+
 pub fn add(a: i32, b: i32) -> i32 { a + b }
 
 #[cfg(test)]
@@ -184,4 +190,3 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
-

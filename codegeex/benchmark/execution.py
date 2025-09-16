@@ -344,7 +344,7 @@ def check_correctness(
                     # does not perform destructive actions on their host or network.
                     # Once you have read this disclaimer and taken appropriate precautions,
                     # uncomment the following line and proceed at your own risk:
-                    # exec_result = subprocess.run([f'java', '-cp', tmp_dir, 'Main'], timeout=timeout, capture_output=True)
+                    exec_result = subprocess.run(['java', '-cp', tmp_dir, 'Main'], timeout=timeout, capture_output=True)
                     if exec_result.returncode == 0:
                         res = "passed"
                     elif exec_result.returncode == 1:
