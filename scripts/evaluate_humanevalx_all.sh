@@ -105,6 +105,19 @@ echo "Evaluating input_dir='$INPUT_DIR' across languages: ${langs[*]}"
 # Prepare CSV header (truncate if exists)
 echo "language,input_file,pass@1,pass@10,pass@100" > "$CSV_OUT"
 
+# Optional: bind host node_modules as global in container if present (for js-md5, etc.)
+HOST_NODE_MODULES_DIR="$REPO_ROOT/node_modules"
+EXTRA_BINDS=()
+ENV_ARGS=(--env NODE_PATH=/usr/local/lib/node_modules:/workspace/node_modules)
+if [[ -d "$HOST_NODE_MODULES_DIR/js-md5" || -d "$HOST_NODE_MODULES_DIR/node_modules/js-md5" ]]; then
+  # Support either repo/node_modules/js-md5 or repo/node_modules/node_modules/js-md5
+  if [[ -d "$HOST_NODE_MODULES_DIR/js-md5" ]]; then
+    EXTRA_BINDS+=( -B "$HOST_NODE_MODULES_DIR:/usr/local/lib/node_modules" )
+  else
+    EXTRA_BINDS+=( -B "$HOST_NODE_MODULES_DIR/node_modules:/usr/local/lib/node_modules" )
+  fi
+fi
+
 
 for lang in "${langs[@]}"; do
   DATA_FILE="$HUMX_DIR/$lang/data/humaneval_${lang}.jsonl.gz"
@@ -167,7 +180,9 @@ for lang in "${langs[@]}"; do
     # Capture evaluator CSV row from stdout; stream logs (stderr) to both console and log file
     set -x
     row=$("$CTR" run \
+      "${ENV_ARGS[@]}" \
       -B "$REPO_ROOT":/workspace \
+      "${EXTRA_BINDS[@]}" \
       "$SIF_PATH" \
       --input_file "$container_input" \
       --problem_file "$container_problem" \
