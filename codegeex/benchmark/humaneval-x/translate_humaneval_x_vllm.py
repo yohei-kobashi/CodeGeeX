@@ -10,7 +10,7 @@ import json
 import urllib.request
 import urllib.error
 
-from codegeex.benchmark.utils import read_translation_dataset
+from codegeex.benchmark.utils import read_translation_dataset, cleanup_code
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -26,11 +26,11 @@ def add_args(parser):
     group.add_argument("--language-src-type", type=str, default=None)
     group.add_argument("--language-tgt-type", type=str, default=None)
     group.add_argument("--samples-per-problem", type=int, default=1)
-    group.add_argument("--batch-size", type=int, default=8)
-    group.add_argument("--temperature", type=float, default=1.0)
-    group.add_argument("--top-p", type=float, default=0.9)
+    group.add_argument("--batch-size", type=int, default=1)
+    group.add_argument("--temperature", type=float, default=0.8)
+    group.add_argument("--top-p", type=float, default=0.95)
     group.add_argument("--top-k", type=int, default=0)
-    group.add_argument("--max-tokens", type=int, default=512)
+    group.add_argument("--max-tokens", type=int, default=1024)
     group.add_argument("--output-file", type=str, default="translations.jsonl")
     group.add_argument("--seed", type=int, default=42)
     # When provided, use external vLLM OpenAI-compatible server instead of local vLLM
@@ -134,6 +134,11 @@ def main():
 
     use_server = args.server_url is not None and len(args.server_url.strip()) > 0
 
+    # Common stop markers to curb extra language blocks and markdown
+    lang_stops = [
+        "\nC++:", "\nJava:", "\nJavaScript:", "\nGo:", "\nPython:", "\nRust:",
+        "```",
+    ]
     if not use_server:
         # Delay-import vLLM only if using local inference
         from vllm import LLM, SamplingParams
@@ -154,7 +159,7 @@ def main():
             top_p=args.top_p,
             top_k=args.top_k,
             max_tokens=args.max_tokens,
-            stop=["<|endoftext|>", "</s>", "<|EOT|>", "<|im_end|>"]
+            stop=["<|endoftext|>", "</s>", "<|EOT|>", "<|im_end|>"] + lang_stops,
         )
     else:
         # In server mode, keep stop list as a simple Python list for HTTP payloads
@@ -163,7 +168,7 @@ def main():
             "top_p": args.top_p,
             "top_k": args.top_k,
             "max_tokens": args.max_tokens,
-            "stop": ["<|endoftext|>", "</s>", "<|EOT|>", "<|im_end|>"]
+            "stop": ["<|endoftext|>", "</s>", "<|EOT|>", "<|im_end|>"] + lang_stops,
         }
 
     start_time = time.perf_counter()
@@ -183,6 +188,13 @@ def main():
             task_ids = []
             for entry in batch:
                 prompt = entry.get("src", entry.get("prompt", ""))
+                # Encourage code-only outputs for the target language
+                if args.language_tgt_type:
+                    tgt = args.language_tgt_type
+                    prompt = (
+                        f"{prompt}\n\nNote: Output only the {tgt} function implementation that matches the above declaration. "
+                        f"Do not include explanations, markdown, or any other language sections."
+                    )
                 prompts.append(prompt)
                 task_ids.append(entry["task_id"])
 
@@ -194,8 +206,16 @@ def main():
                 for j, out in enumerate(outputs):
                     # out.outputs は候補のリスト（通常は1つ）:
                     text = out.outputs[0].text if out.outputs else ""
+                    # Post-process to keep target-language code only
+                    cleaned = cleanup_code(
+                        text,
+                        language_type=(args.language_tgt_type or args.language_src_type or ""),
+                        dataset=args.dataset,
+                    )
                     record = {
                         "task_id": task_ids[j],
+                        "prompt": prompts[j],
+                        "generation": cleaned,
                         "generated": text,
                     }
                     outfile.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -214,8 +234,15 @@ def main():
                         api_key=args.api_key,
                         timeout=args.request_timeout,
                     )
+                    cleaned = cleanup_code(
+                        text,
+                        language_type=(args.language_tgt_type or args.language_src_type or ""),
+                        dataset=args.dataset,
+                    )
                     record = {
                         "task_id": task_ids[j],
+                        "prompt": prompts[j],
+                        "generation": cleaned,
                         "generated": text,
                     }
                     outfile.write(json.dumps(record, ensure_ascii=False) + "\n")
