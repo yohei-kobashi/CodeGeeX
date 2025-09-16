@@ -55,16 +55,30 @@ else
   fail "Python env and codegeex import"
 fi
 
-# 2) Node.js and js-md5 presence
+# 2) Node.js and js-md5 presence (with diagnostics)
 if "$CTR" exec -B "$REPO_ROOT":/workspace "$SIF_PATH" bash -lc '
   set -e
-  export NODE_PATH=/usr/local/lib/node_modules:${NODE_PATH}
   node -v >/dev/null
+  NPM_ROOT=$(npm root -g 2>/dev/null || true)
+  echo "[node] NODE_PATH(before)=${NODE_PATH:-}"
+  echo "[node] npm root -g=${NPM_ROOT}"
+  if [ -n "$NPM_ROOT" ] && [ -d "$NPM_ROOT" ]; then
+    export NODE_PATH="$NPM_ROOT:${NODE_PATH}"
+  else
+    export NODE_PATH="/usr/local/lib/node_modules:${NODE_PATH}"
+  fi
+  echo "[node] NODE_PATH(after)=${NODE_PATH}"
+  if [ -d "$NPM_ROOT/js-md5" ] || [ -d "/usr/local/lib/node_modules/js-md5" ]; then
+    echo "[node] js-md5 directory found"
+  else
+    echo "[node] js-md5 directory NOT found" >&2
+    exit 10
+  fi
   node - <<"NODE" >/dev/null
 require("js-md5");
 console.log("ok");
 NODE
-'; then
+' >/dev/null; then
   pass "Node.js and js-md5 module"
 else
   fail "Node.js and js-md5 module"

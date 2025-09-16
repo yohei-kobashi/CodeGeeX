@@ -13,7 +13,8 @@ From: ubuntu:22.04
     # Ensure Python can import the top-level codegeex package.
     export PYTHONPATH=/workspace:$PYTHONPATH
     # Ensure Node.js can resolve globally installed modules like js-md5.
-    export NODE_PATH=/usr/local/lib/node_modules
+    # Include common global locations used by different npm prefixes.
+    export NODE_PATH=/usr/local/lib/node_modules:/usr/lib/node_modules
 
 %files
     # Copy project requirements into the image at build time

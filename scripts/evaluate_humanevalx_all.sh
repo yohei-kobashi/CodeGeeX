@@ -108,7 +108,7 @@ echo "language,input_file,pass@1,pass@10,pass@100" > "$CSV_OUT"
 # Optional: bind host node_modules as global in container if present (for js-md5, etc.)
 HOST_NODE_MODULES_DIR="$REPO_ROOT/node_modules"
 EXTRA_BINDS=()
-ENV_ARGS=(--env NODE_PATH=/usr/local/lib/node_modules:/workspace/node_modules)
+ENV_ARGS=(--env NODE_PATH=/usr/local/lib/node_modules:/usr/lib/node_modules:/workspace/node_modules)
 if [[ -d "$HOST_NODE_MODULES_DIR/js-md5" || -d "$HOST_NODE_MODULES_DIR/node_modules/js-md5" ]]; then
   # Support either repo/node_modules/js-md5 or repo/node_modules/node_modules/js-md5
   if [[ -d "$HOST_NODE_MODULES_DIR/js-md5" ]]; then
