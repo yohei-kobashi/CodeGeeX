@@ -58,8 +58,12 @@ fi
 # 2) Node.js and js-md5 presence
 if "$CTR" exec -B "$REPO_ROOT":/workspace "$SIF_PATH" bash -lc '
   set -e
+  export NODE_PATH=/usr/local/lib/node_modules:${NODE_PATH}
   node -v >/dev/null
-  node -e "require('js-md5'); console.log('ok')" >/dev/null
+  node - <<"NODE" >/dev/null
+require("js-md5");
+console.log("ok");
+NODE
 '; then
   pass "Node.js and js-md5 module"
 else
@@ -108,4 +112,3 @@ else
 fi
 
 exit $EXIT_CODE
-
