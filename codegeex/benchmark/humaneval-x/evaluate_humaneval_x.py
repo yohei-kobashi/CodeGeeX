@@ -188,8 +188,8 @@ def evaluate_functional_correctness(
     else:
         out_file = os.path.join(input_file.replace(".jsonl", suffix))
 
-    if "/codegeex/benchmark/humaneval-x/" in input_file:
-        test_groundtruth = True
+    # Ground truth mode is now controlled only by the explicit flag 'test_groundtruth'.
+    # Do not auto-enable based on input path.
 
     tgt_lang = _extract_translation_target(input_file)
     translation_mode = tgt_lang is not None
@@ -237,6 +237,9 @@ def evaluate_functional_correctness(
                     lang = "js"
                 tmp_dir_ = os.path.join(tmp_dir, lang, "evaluation")
                 sample["task_id"] = task_id
+                # Support both 'generation' and 'generated' fields in inputs
+                if "generation" not in sample and "generated" in sample:
+                    sample["generation"] = sample["generated"]
                 sample["test_code"] = process_humaneval_test(sample, problems, example_test)
                 if sample["test_code"] is None:
                     continue
