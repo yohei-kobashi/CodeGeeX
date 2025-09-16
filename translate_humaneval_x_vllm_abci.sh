@@ -1,4 +1,18 @@
 #!/bin/bash
+#PBS -q rt_HG
+#PBS -l select=1
+#PBS -l walltime=36:00:00
+#PBS -P gcb50389
+
+module purge
+module load cuda/12.8 python/3.12
+export CUDA_VISIBLE_DEVICES=$(
+  nvidia-smi --query-gpu=index,uuid --format=csv,noheader |
+  awk -v U="$CUDA_VISIBLE_DEVICES" 'BEGIN{gsub(/ /,"",U)} $2==U{print $1}'
+)
+source env_vllm/bin/activate
+cd CodeGeeX
+
 python -m codegeex.benchmark.humaneval-x.translate_humaneval_x_vllm --model-name-or-path Qwen/Qwen3-Coder-30B-A3B-Instruct --src-path codegeex/benchmark/humaneval-x/cpp/data/humaneval_cpp.jsonl.gz --tgt-path codegeex/benchmark/humaneval-x/go/data/humaneval_go.jsonl.gz --language-src-type cpp --language-tgt-type go --batch-size 512 --output-file codegeex/benchmark/humaneval-x/cpp/evaluation/humaneval_cpp_to_go.jsonl
 python -m codegeex.benchmark.humaneval-x.translate_humaneval_x_vllm --model-name-or-path Qwen/Qwen3-Coder-30B-A3B-Instruct --src-path codegeex/benchmark/humaneval-x/cpp/data/humaneval_cpp.jsonl.gz --tgt-path codegeex/benchmark/humaneval-x/java/data/humaneval_java.jsonl.gz --language-src-type cpp --language-tgt-type java --batch-size 512 --output-file codegeex/benchmark/humaneval-x/cpp/evaluation/humaneval_cpp_to_java.jsonl
 python -m codegeex.benchmark.humaneval-x.translate_humaneval_x_vllm --model-name-or-path Qwen/Qwen3-Coder-30B-A3B-Instruct --src-path codegeex/benchmark/humaneval-x/cpp/data/humaneval_cpp.jsonl.gz --tgt-path codegeex/benchmark/humaneval-x/js/data/humaneval_js.jsonl.gz --language-src-type cpp --language-tgt-type js --batch-size 512 --output-file codegeex/benchmark/humaneval-x/cpp/evaluation/humaneval_cpp_to_js.jsonl
