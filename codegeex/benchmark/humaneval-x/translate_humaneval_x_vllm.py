@@ -55,6 +55,50 @@ def add_args(parser):
     return parser
 
 
+def _strip_leading_to_code(text: str, lang: str) -> str:
+    """Remove leading instruction/markdown lines until the first plausible
+    code construct for the target language. Best-effort heuristic.
+    """
+    import re
+    lines = text.splitlines()
+    # Drop obvious instruction lines at the start
+    drop_prefixes = (
+        "note:",
+        "do not include",
+        "don't include",
+        "please",
+        "output only",
+        "only output",
+    )
+    i = 0
+    while i < len(lines) and lines[i].strip():
+        l = lines[i].strip().lower()
+        if any(l.startswith(p) for p in drop_prefixes):
+            i += 1
+            continue
+        break
+
+    cand = "\n".join(lines[i:])
+
+    # Language-specific first-token regex
+    patterns = {
+        "python": r"(?m)^\s*def\s+\w+\s*\(",
+        "js": r"(?m)^\s*function\s+\w+\s*\(|^\s*const\s+\w+\s*=\s*\(",
+        "go": r"(?m)^\s*func\s+\w+\s*\(",
+        "cpp": r"(?m)^\s*[\w:<>,\[\]&\*\s]+\s+\w+\s*\(.*\)\s*\{",
+        "java": r"(?m)^\s*(public|private|protected|static|final|\w[\w<>\[\]]+\s+\w+)\s*\(.*\)\s*\{",
+        "rust": r"(?m)^\s*fn\s+\w+\s*\(",
+    }
+    pat = patterns.get(lang.lower())
+    if not pat:
+        return cand
+    m = re.search(pat, cand)
+    if not m:
+        return cand
+    start = cand.rfind("\n", 0, m.start()) + 1
+    return cand[start:]
+
+
 def _patch_hf_autoconfig_register_allow_duplicates():
     """Work around duplicate AutoConfig.register keys (e.g., 'aimv2').
 
@@ -231,9 +275,11 @@ def main():
                 for j, out in enumerate(outputs):
                     # out.outputs は候補のリスト（通常は1つ）:
                     text = out.outputs[0].text if out.outputs else ""
+                    # Drop leading instructions/markdown until code start.
+                    primed = _strip_leading_to_code(text, args.language_tgt_type or args.language_src_type or "")
                     # Post-process to keep target-language code only
                     cleaned = cleanup_code(
-                        text,
+                        primed,
                         language_type=(args.language_tgt_type or args.language_src_type or ""),
                         dataset=args.dataset,
                     )
@@ -259,8 +305,9 @@ def main():
                         api_key=args.api_key,
                         timeout=args.request_timeout,
                     )
+                    primed = _strip_leading_to_code(text, args.language_tgt_type or args.language_src_type or "")
                     cleaned = cleanup_code(
-                        text,
+                        primed,
                         language_type=(args.language_tgt_type or args.language_src_type or ""),
                         dataset=args.dataset,
                     )
