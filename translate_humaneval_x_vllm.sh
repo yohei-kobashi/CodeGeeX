@@ -1,5 +1,16 @@
 #!/bin/bash
 export CUDA_VISIBLE_DEVICES=0
+source /work/gj26/b20048/miniconda3/etc/profile.d/conda.sh
+conda activate inference_env
+export PATH="$CONDA_PREFIX/bin:/opt/rh/gcc-toolset-14/root/usr/bin:$PATH"
+
+export CC=/opt/rh/gcc-toolset-14/root/usr/bin/gcc
+export CXX=/opt/rh/gcc-toolset-14/root/usr/bin/g++
+export TRITON_CC="$CC"
+export TRITON_CXX="$CXX"
+export CUDAHOSTCXX="$CXX"
+
+export PYTHONNOUSERSITE=1
 python -m codegeex.benchmark.humaneval-x.translate_humaneval_x_vllm --model-name-or-path Qwen/Qwen3-Coder-30B-A3B-Instruct --src-path codegeex/benchmark/humaneval-x/cpp/data/humaneval_cpp.jsonl.gz --tgt-path codegeex/benchmark/humaneval-x/go/data/humaneval_go.jsonl.gz --language-src-type cpp --language-tgt-type go --batch-size 512 --output-file codegeex/benchmark/humaneval-x/cpp/evaluation/humaneval_cpp_to_go.jsonl
 python -m codegeex.benchmark.humaneval-x.translate_humaneval_x_vllm --model-name-or-path Qwen/Qwen3-Coder-30B-A3B-Instruct --src-path codegeex/benchmark/humaneval-x/cpp/data/humaneval_cpp.jsonl.gz --tgt-path codegeex/benchmark/humaneval-x/java/data/humaneval_java.jsonl.gz --language-src-type cpp --language-tgt-type java --batch-size 512 --output-file codegeex/benchmark/humaneval-x/cpp/evaluation/humaneval_cpp_to_java.jsonl
 python -m codegeex.benchmark.humaneval-x.translate_humaneval_x_vllm --model-name-or-path Qwen/Qwen3-Coder-30B-A3B-Instruct --src-path codegeex/benchmark/humaneval-x/cpp/data/humaneval_cpp.jsonl.gz --tgt-path codegeex/benchmark/humaneval-x/js/data/humaneval_js.jsonl.gz --language-src-type cpp --language-tgt-type js --batch-size 512 --output-file codegeex/benchmark/humaneval-x/cpp/evaluation/humaneval_cpp_to_js.jsonl

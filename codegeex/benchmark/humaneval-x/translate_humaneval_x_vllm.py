@@ -25,7 +25,7 @@ def add_args(parser):
     group.add_argument("--dataset", type=str, default="humaneval")
     group.add_argument("--language-src-type", type=str, default=None)
     group.add_argument("--language-tgt-type", type=str, default=None)
-    group.add_argument("--samples-per-problem", type=int, default=1)
+    group.add_argument("--samples-per-problem", type=int, default=20)
     group.add_argument("--batch-size", type=int, default=1)
     group.add_argument("--temperature", type=float, default=0.8)
     group.add_argument("--top-p", type=float, default=0.95)
@@ -69,6 +69,11 @@ def _strip_leading_to_code(text: str, lang: str) -> str:
         "please",
         "output only",
         "only output",
+        "the function signature must match",
+        "the code should",
+        "return only",
+        "do not output",
+        "you should only",
     )
     i = 0
     while i < len(lines) and lines[i].strip():
@@ -97,6 +102,74 @@ def _strip_leading_to_code(text: str, lang: str) -> str:
         return cand
     start = cand.rfind("\n", 0, m.start()) + 1
     return cand[start:]
+
+
+def _extract_go_body(text: str) -> str:
+    """If a full Go function is present (starting with `func <Name>(`),
+    extract the body between the first '{' and its matching '}'. Otherwise
+    return the text unchanged.
+    """
+    s = text
+    try:
+        idx = s.find("func ")
+        if idx == -1:
+            return s
+        brace = s.find("{", idx)
+        if brace == -1:
+            return s
+        # Simple brace matching
+        depth = 0
+        end = -1
+        for i in range(brace, len(s)):
+            c = s[i]
+            if c == '{':
+                depth += 1
+            elif c == '}':
+                depth -= 1
+                if depth == 0:
+                    end = i
+                    break
+        if end == -1:
+            return s
+        body = s[brace + 1:end]
+        # Trim leading/trailing whitespace/newlines
+        return body.strip('\n')
+    except Exception:
+        return text
+
+
+def _extract_java_body(text: str) -> str:
+    """Extract the Java method body from a full method snippet.
+    If a method signature like `public ... name(...) {` is found, return the
+    content inside its outermost braces. Otherwise, return text unchanged.
+    """
+    s = text
+    try:
+        # Find the beginning of a plausible Java method signature
+        import re
+        m = re.search(r"(?m)^\s*(public|private|protected|static|final|synchronized|native|abstract|\w[\w<>\[\]]+\s+\w+)\s*\(.*\)\s*\{", s)
+        if not m:
+            return s
+        brace = s.find("{", m.start())
+        if brace == -1:
+            return s
+        depth = 0
+        end = -1
+        for i in range(brace, len(s)):
+            c = s[i]
+            if c == '{':
+                depth += 1
+            elif c == '}':
+                depth -= 1
+                if depth == 0:
+                    end = i
+                    break
+        if end == -1:
+            return s
+        body = s[brace + 1:end]
+        return body.strip('\n')
+    except Exception:
+        return text
 
 
 def _patch_hf_autoconfig_register_allow_duplicates():
@@ -256,14 +329,8 @@ def main():
             prompts = []
             task_ids = []
             for entry in batch:
+                # Use the same prompt as Megatron path (no extra instructions)
                 prompt = entry.get("src", entry.get("prompt", ""))
-                # Encourage code-only outputs for the target language
-                if args.language_tgt_type:
-                    tgt = args.language_tgt_type
-                    prompt = (
-                        f"{prompt}\n\nNote: Output only the {tgt} function implementation that matches the above declaration. "
-                        f"Do not include explanations, markdown, or any other language sections."
-                    )
                 prompts.append(prompt)
                 task_ids.append(entry["task_id"])
 
@@ -276,13 +343,19 @@ def main():
                     # out.outputs は候補のリスト（通常は1つ）:
                     text = out.outputs[0].text if out.outputs else ""
                     # Drop leading instructions/markdown until code start.
-                    primed = _strip_leading_to_code(text, args.language_tgt_type or args.language_src_type or "")
-                    # Post-process to keep target-language code only
-                    cleaned = cleanup_code(
-                        primed,
-                        language_type=(args.language_tgt_type or args.language_src_type or ""),
-                        dataset=args.dataset,
-                    )
+                    lang = (args.language_tgt_type or args.language_src_type or "")
+                    primed = _strip_leading_to_code(text, lang)
+                    if lang.lower() == "go":
+                        primed = _extract_go_body(primed)
+                        cleaned = cleanup_code(primed, language_type="go", dataset=args.dataset)
+                    elif lang.lower() == "java":
+                        # For Java, keep only the method body and avoid extra trimming
+                        cleaned = _extract_java_body(primed)
+                    elif lang.lower() in ("js", "javascript", "cpp", "c++"):
+                        # Extract the outer braced block (function body) if present
+                        cleaned = _extract_braced_body(primed)
+                    else:
+                        cleaned = cleanup_code(primed, language_type=lang, dataset=args.dataset)
                     record = {
                         "task_id": task_ids[j],
                         "prompt": prompts[j],
@@ -305,12 +378,17 @@ def main():
                         api_key=args.api_key,
                         timeout=args.request_timeout,
                     )
-                    primed = _strip_leading_to_code(text, args.language_tgt_type or args.language_src_type or "")
-                    cleaned = cleanup_code(
-                        primed,
-                        language_type=(args.language_tgt_type or args.language_src_type or ""),
-                        dataset=args.dataset,
-                    )
+                    lang = (args.language_tgt_type or args.language_src_type or "")
+                    primed = _strip_leading_to_code(text, lang)
+                    if lang.lower() == "go":
+                        primed = _extract_go_body(primed)
+                        cleaned = cleanup_code(primed, language_type="go", dataset=args.dataset)
+                    elif lang.lower() == "java":
+                        cleaned = _extract_java_body(primed)
+                    elif lang.lower() in ("js", "javascript", "cpp", "c++"):
+                        cleaned = _extract_braced_body(primed)
+                    else:
+                        cleaned = cleanup_code(primed, language_type=lang, dataset=args.dataset)
                     record = {
                         "task_id": task_ids[j],
                         "prompt": prompts[j],
@@ -322,6 +400,33 @@ def main():
             n_done += len(batch)
             elapsed = time.perf_counter() - start_time
             logger.info(f"Processed {n_done}/{total} tasks (elapsed: {elapsed:.1f}s)")
+
+def _extract_braced_body(text: str) -> str:
+    """Generic: extract text inside the first balanced {...} block.
+    If not found, return the original text.
+    """
+    s = text
+    try:
+        brace = s.find("{")
+        if brace == -1:
+            return s
+        depth = 0
+        end = -1
+        for i in range(brace, len(s)):
+            c = s[i]
+            if c == '{':
+                depth += 1
+            elif c == '}':
+                depth -= 1
+                if depth == 0:
+                    end = i
+                    break
+        if end == -1:
+            return s
+        body = s[brace + 1:end]
+        return body.strip('\n')
+    except Exception:
+        return text
 
     logger.info(f"All done. Results written to {args.output_file}")
 
