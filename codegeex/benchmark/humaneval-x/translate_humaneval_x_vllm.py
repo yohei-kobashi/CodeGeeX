@@ -55,6 +55,29 @@ def add_args(parser):
     return parser
 
 
+def _patch_hf_autoconfig_register_allow_duplicates():
+    """Work around duplicate AutoConfig.register keys (e.g., 'aimv2').
+
+    Some environments ship Transformers versions that already register certain
+    keys vLLM attempts to register. This patch makes AutoConfig.register
+    tolerant by setting exist_ok=True and swallowing duplicate errors.
+    """
+    try:
+        from transformers.models.auto.configuration_auto import AutoConfig
+        orig_register = AutoConfig.register
+
+        def safe_register(key, config, exist_ok=False):  # type: ignore
+            try:
+                return orig_register(key, config, exist_ok=True)
+            except Exception:
+                return None
+
+        AutoConfig.register = safe_register  # type: ignore
+        logger.info("Patched Transformers AutoConfig.register to allow duplicates.")
+    except Exception as e:
+        logger.warning(f"AutoConfig.register patch failed or not needed: {e}")
+
+
 def _call_vllm_server(base_url,
                       model,
                       prompt,
@@ -141,6 +164,7 @@ def main():
     ]
     if not use_server:
         # Delay-import vLLM only if using local inference
+        _patch_hf_autoconfig_register_allow_duplicates()
         from vllm import LLM, SamplingParams
         # Initialize vLLM (H200ならbf16推奨 / device指定は不要)
         llm = LLM(
@@ -151,6 +175,7 @@ def main():
             kv_cache_dtype="fp8",
             max_num_batched_tokens=16384,
             max_num_seqs=args.batch_size,
+            enforce_eager=True,
         )
 
         # 共通の SamplingParams
