@@ -7,7 +7,6 @@ From: ubuntu:22.04
     export PATH=/root/.cargo/bin:/usr/local/go/bin:$PATH
     export GOPATH=/opt/humanevalx/go
     export GOMODCACHE=/opt/humanevalx/go/pkg/mod
-    export GOCACHE=/opt/humanevalx/go/cache
     export HUMANEVALX_GO_MOD=/opt/humanevalx/go_mod
     export LANG=C.UTF-8
     export LC_ALL=C.UTF-8
@@ -93,9 +92,7 @@ From: ubuntu:22.04
     # Pre-fetch Go module dependencies used by HumanEval-X harness
     export GOPATH=/opt/humanevalx/go
     export GOMODCACHE=/opt/humanevalx/go/pkg/mod
-    export GOCACHE=/opt/humanevalx/go/cache
     mkdir -p "$GOMODCACHE"
-    mkdir -p "$GOCACHE"
     mkdir -p /opt/humanevalx/go_mod
     cd /opt/humanevalx/go_mod
     cat <<'EOF' > go.mod

@@ -116,6 +116,12 @@ def check_correctness(
                     src = os.path.join(go_module_root, fname)
                     if os.path.isfile(src):
                         shutil.copy(src, os.path.join(tmp_dir, fname))
+            go_build_cache = os.path.join(tmp_dir, "go-build-cache")
+            if not os.path.exists(go_build_cache):
+                os.makedirs(go_build_cache)
+            go_env = os.environ.copy()
+            go_env.setdefault("GO111MODULE", "on")
+            go_env["GOCACHE"] = go_build_cache
             try:
                 exec_result = None
                 with time_limit(timeout):
@@ -128,7 +134,7 @@ def check_correctness(
                     # does not perform destructive actions on their host or network.
                     # Once you have read this disclaimer and taken appropriate precautions,
                     # uncomment the following line and proceed at your own risk:
-                     exec_result = subprocess.run(["go", "test", f"-timeout={timeout}s", "main_test.go"], timeout=timeout, capture_output=True)
+                     exec_result = subprocess.run(["go", "test", f"-timeout={timeout}s", "main_test.go"], timeout=timeout, capture_output=True, env=go_env)
 
                 if exec_result.returncode == 0:
                     result.append("passed")
