@@ -160,6 +160,21 @@ def _lang_from_problem_file(problem_file: str) -> Optional[str]:
     }.get(raw, raw)
 
 
+# Usage notes for evaluate_functional_correctness arguments:
+#   input_file: JSONL (optionally .gz) containing model generations with task ids.
+#   tmp_dir: scratch directory where language-specific execution sandboxes are created.
+#   n_workers: number of threads used to run test suites in parallel.
+#   timeout: per-sample execution timeout in seconds when running tests.
+#   problem_file: canonical HumanEval(-X) problem definitions used for prompts/tests.
+#   out_dir: optional folder for aggregated result JSONL; defaults beside input_file.
+#   k: pass@k cutoffs to report when full coverage is available.
+#   test_groundtruth: run the bundled reference solutions instead of model outputs.
+#   example_test: evaluate against example tests rather than hidden ones when available.
+# Container example (mirrors scripts/evaluate_humanevalx_all.sh): from repo root run
+#   singularity run -B "$(pwd)":/workspace codegeex/benchmark/humaneval-x/humanevalx.sif \
+#     --input_file /workspace/path/to/generated.jsonl \
+#     --problem_file /workspace/codegeex/benchmark/humaneval-x/<lang>/data/humaneval_<lang>.jsonl.gz \
+#     --tmp_dir /workspace/codegeex/benchmark/humaneval-x --n_workers 64 --timeout 5
 def evaluate_functional_correctness(
         input_file: str = None,
         tmp_dir: str = "./",
