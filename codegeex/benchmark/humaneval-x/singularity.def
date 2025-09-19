@@ -5,6 +5,9 @@ From: ubuntu:22.04
     export DEBIAN_FRONTEND=noninteractive
     # Add Go and Cargo to PATH for language runtimes
     export PATH=/root/.cargo/bin:/usr/local/go/bin:$PATH
+    export GOPATH=/opt/humanevalx/go
+    export GOMODCACHE=/opt/humanevalx/go/pkg/mod
+    export HUMANEVALX_GO_MOD=/opt/humanevalx/go_mod
     export LANG=C.UTF-8
     export LC_ALL=C.UTF-8
     export WORKDIR=/workspace
@@ -85,6 +88,21 @@ From: ubuntu:22.04
     retry apt-get update
     retry apt-get install -y --no-install-recommends rustc cargo
     rm -rf /var/lib/apt/lists/*
+
+    # Pre-fetch Go module dependencies used by HumanEval-X harness
+    export GOPATH=/opt/humanevalx/go
+    export GOMODCACHE=/opt/humanevalx/go/pkg/mod
+    mkdir -p "$GOMODCACHE"
+    mkdir -p /opt/humanevalx/go_mod
+    cd /opt/humanevalx/go_mod
+    cat <<'EOF' > go.mod
+module humanevalx
+
+go 1.18
+
+require github.com/stretchr/testify v1.8.2
+EOF
+    GO111MODULE=on go mod tidy
 
     # Python packages for evaluator (from repository requirements copied via %files)
     mkdir -p /opt/humanevalx
