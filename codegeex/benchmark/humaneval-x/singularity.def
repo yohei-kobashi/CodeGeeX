@@ -94,17 +94,20 @@ From: ubuntu:22.04
     export GOMODCACHE=/opt/humanevalx/go/pkg/mod
     mkdir -p "$GOMODCACHE"
     mkdir -p /opt/humanevalx/go_mod
-    cd /opt/humanevalx/go_mod
-    cat <<'EOF' > go.mod
+    cat <<'EOF' > /opt/humanevalx/go_mod/go.mod
 module humanevalx
 
 go 1.18
 
 require github.com/stretchr/testify v1.8.2
 EOF
-    GO111MODULE=on go mod edit -require=github.com/stretchr/testify@v1.8.2
-    GO111MODULE=on go mod tidy
-    GO111MODULE=on go mod download github.com/stretchr/testify@v1.8.2
+    cat <<'EOF' > /opt/humanevalx/go_mod/stub.go
+package humanevalx
+
+import _ "github.com/stretchr/testify/assert"
+EOF
+    (cd /opt/humanevalx/go_mod && GO111MODULE=on go mod tidy && GO111MODULE=on go mod download github.com/stretchr/testify@v1.8.2)
+    rm -f /opt/humanevalx/go_mod/stub.go
 
     # Python packages for evaluator (from repository requirements copied via %files)
     mkdir -p /opt/humanevalx

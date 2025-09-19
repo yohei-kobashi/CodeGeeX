@@ -110,44 +110,11 @@ def check_correctness(
                 os.makedirs(tmp_dir)
 
             os.chdir(tmp_dir)
-            open(f"main_test.go", 'w').write(sample["test_code"])
-            go_module_root = os.environ.get("HUMANEVALX_GO_MOD", "/opt/humanevalx/go_mod")
-            go_debug = {
-                "temp_dir": tmp_dir,
-                "module_template": go_module_root,
-            }
-            if os.path.isdir(go_module_root):
-                for fname in ("go.mod", "go.sum"):
-                    src = os.path.join(go_module_root, fname)
-                    if os.path.isfile(src):
-                        dst = os.path.join(tmp_dir, fname)
-                        shutil.copy(src, dst)
-                        go_debug[f"copied_{fname}"] = dst
-            else:
-                go_debug["module_template_missing"] = True
+            open("main_test.go", "w").write(sample["test_code"])
 
-            go_build_cache = os.path.join(tmp_dir, "go-build-cache")
-            if not os.path.exists(go_build_cache):
-                os.makedirs(go_build_cache)
             go_env = os.environ.copy()
-            go_env.setdefault("GO111MODULE", "on")
-            go_env.setdefault("GOMODCACHE", os.environ.get("GOMODCACHE", "/opt/humanevalx/go/pkg/mod"))
-            go_env["GOCACHE"] = go_build_cache
+            go_env["GO111MODULE"] = "off"
 
-            def _read_file(path):
-                try:
-                    with open(path, "r") as fh:
-                        return fh.read()
-                except Exception as e:
-                    return f"<unavailable: {e}>"
-
-            go_debug["go.mod"] = _read_file(os.path.join(tmp_dir, "go.mod"))
-            go_debug["go.sum"] = _read_file(os.path.join(tmp_dir, "go.sum"))
-            go_debug["dir_listing"] = os.listdir(tmp_dir)
-            go_debug["env_GO111MODULE"] = go_env.get("GO111MODULE")
-            go_debug["env_GOMODCACHE"] = go_env.get("GOMODCACHE")
-            go_debug["env_GOCACHE"] = go_env.get("GOCACHE")
-            print(f"[go-debug] setup {json.dumps(go_debug, ensure_ascii=False)[:2000]}", file=sys.stderr)
             try:
                 exec_result = None
                 with time_limit(timeout):
@@ -160,26 +127,12 @@ def check_correctness(
                     # does not perform destructive actions on their host or network.
                     # Once you have read this disclaimer and taken appropriate precautions,
                     # uncomment the following line and proceed at your own risk:
-                     env_dump = subprocess.run(
-                         ["go", "env", "GOMOD", "GOMODCACHE", "GOCACHE", "GOPATH", "GO111MODULE"],
-                         timeout=timeout,
-                         capture_output=True,
-                         env=go_env,
-                     )
-                     print(
-                         f"[go-debug] go env stdout: {env_dump.stdout.decode(errors='ignore')}",
-                         file=sys.stderr,
-                     )
-                     print(
-                         f"[go-debug] go env stderr: {env_dump.stderr.decode(errors='ignore')}",
-                         file=sys.stderr,
-                     )
                      exec_result = subprocess.run(
-                         ["go", "test", f"-timeout={timeout}s", "main_test.go"],
-                         timeout=timeout,
-                         capture_output=True,
-                         env=go_env,
-                     )
+                        ["go", "test", f"-timeout={timeout}s", "main_test.go"],
+                        timeout=timeout,
+                        capture_output=True,
+                        env=go_env,
+                    )
 
                 if exec_result.returncode == 0:
                     result.append("passed")
@@ -187,12 +140,12 @@ def check_correctness(
                     if exec_result.stderr:
                         try:
                             err = exec_result.stderr.decode()
-                        except:
+                        except Exception:
                             err = exec_result.stderr
                     else:
                         try:
                             err = exec_result.stdout.decode()
-                        except:
+                        except Exception:
                             err = exec_result.stdout
                     result.append(f"failed: {err}")
 

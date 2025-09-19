@@ -66,22 +66,6 @@ def _strip_translation_prompt(prompt: str, language: str, canonical: str = "") -
     trimmed = prompt[idx + len(tag):]
     return trimmed.lstrip("\n")
 
-
-def _ensure_go_module_template_once():
-    """Warn if Go tests cannot locate the pre-baked module template."""
-    if getattr(_ensure_go_module_template_once, "_checked", False):
-        return
-
-    template = os.environ.get("HUMANEVALX_GO_MOD", "/opt/humanevalx/go_mod")
-    if not (os.path.isdir(template) and os.path.isfile(os.path.join(template, "go.mod"))):
-        print(
-            "[warn] Go module template missing; testify imports may fail. "
-            "Set HUMANEVALX_GO_MOD to a directory containing go.mod/go.sum.",
-            file=sys.stderr,
-        )
-    _ensure_go_module_template_once._checked = True
-
-
 def _extract_translation_target(path: str) -> Optional[str]:
     """Extract target language token from filename/path.
 
@@ -161,6 +145,10 @@ def process_humaneval_test(sample, problems, example_test=False):
         else:
             test = problems[task_id]["test"]
         test_setup = problems[task_id]["test_setup"]
+        if "github.com/stretchr/testify/assert" in test_setup:
+            test_setup = test_setup.replace('\n    "github.com/stretchr/testify/assert"\n', '\n')
+            if "\"reflect\"" not in test_setup:
+                test_setup = test_setup.replace("import (\n", "import (\n    \"reflect\"\n", 1)
         other_pkgs = []
         for pkg in IMPORT_HELPER["go"]:
             if pkg not in test_setup:
@@ -172,6 +160,10 @@ def process_humaneval_test(sample, problems, example_test=False):
             test_string = test_setup + "\n" + import_other_pkgs + "\n" + prompt + code + "\n" + test
         else:
             test_string = test_setup + "\n" + prompt + code + "\n" + test
+        if "github.com/stretchr/testify/assert" in problems[task_id]["test_setup"]:
+            stub = """
+type humanevalAssert struct {\n    t *testing.T\n}\n\nfunc (a *humanevalAssert) Equal(expected, actual interface{}, msgAndArgs ...interface{}) bool {\n    if !reflect.DeepEqual(expected, actual) {\n        if len(msgAndArgs) > 0 {\n            a.t.Errorf("assertion failed: %v", msgAndArgs[0])\n        } else {\n            a.t.Errorf("assertion failed: expected %v got %v", expected, actual)\n        }\n        return false\n    }\n    return true\n}\n\ntype humanevalAssertPkg struct{}\n\nfunc (humanevalAssertPkg) New(t *testing.T) *humanevalAssert {\n    t.Helper()\n    return &humanevalAssert{t: t}\n}\n\nvar assert = humanevalAssertPkg{}\n"""
+            test_string += "\n" + stub
     elif language == "rust":
         main = "\nfn main(){ \n } \n"
         declaration = problems[task_id]["declaration"]
@@ -275,7 +267,6 @@ def evaluate_functional_correctness(
         completion_id = Counter()
         n_samples = 0
         results = defaultdict(list)
-        go_template_checked = False
 
         if test_groundtruth:
             print("Testing ground truth...", file=sys.stderr)
@@ -284,9 +275,6 @@ def evaluate_functional_correctness(
                 lang = task_id.split("/")[0].lower()
                 if lang == "javascript":
                     lang = "js"
-                if lang == "go" and not go_template_checked:
-                    _ensure_go_module_template_once()
-                    go_template_checked = True
                 tmp_dir_ = os.path.join(tmp_dir, lang, "evaluation")
                 sample["generation"] = sample["canonical_solution"]
                 sample["test_code"] = process_humaneval_test(sample, problems, example_test)
@@ -314,9 +302,6 @@ def evaluate_functional_correctness(
                     task_id = f"{LANGUAGE_NAME[lang]}/{task_id}"
                 if lang == "javascript":
                     lang = "js"
-                if lang == "go" and not go_template_checked:
-                    _ensure_go_module_template_once()
-                    go_template_checked = True
                 tmp_dir_ = os.path.join(tmp_dir, lang, "evaluation")
                 sample["task_id"] = task_id
                 # Support both 'generation' and 'generated' fields in inputs
