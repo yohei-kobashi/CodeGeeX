@@ -102,8 +102,9 @@ go 1.18
 
 require github.com/stretchr/testify v1.8.2
 EOF
+    GO111MODULE=on go mod edit -require=github.com/stretchr/testify@v1.8.2
     GO111MODULE=on go mod tidy
-    GO111MODULE=on go mod download
+    GO111MODULE=on go mod download github.com/stretchr/testify@v1.8.2
 
     # Python packages for evaluator (from repository requirements copied via %files)
     mkdir -p /opt/humanevalx
