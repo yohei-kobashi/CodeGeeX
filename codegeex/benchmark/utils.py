@@ -144,6 +144,9 @@ def is_code_generation_finished(
         elif language_type.lower() == "cpp":
             if code.count("{") + 1 == code.count("}"):
                 return True
+        elif language_type.lower() == "rust":
+            if code.count("{") + 1 == code.count("}"):
+                return True
 
     return False
 
@@ -184,6 +187,9 @@ def cleanup_code(
             if '}' in code:
                 code = code[:code.rfind('}')] + '}'
         elif language_type.lower() == "js":
+            if '}' in code:
+                code = code[:code.rfind('}')] + '}'
+        elif language_type.lower() == "rust":
             if '}' in code:
                 code = code[:code.rfind('}')] + '}'
 
