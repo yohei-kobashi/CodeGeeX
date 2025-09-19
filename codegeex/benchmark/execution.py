@@ -110,12 +110,12 @@ def check_correctness(
 
             os.chdir(tmp_dir)
             open(f"main_test.go", 'w').write(sample["test_code"])
-            go_module_root = os.environ.get("HUMANEVALX_GO_MOD")
-            if go_module_root:
+            go_module_root = os.environ.get("HUMANEVALX_GO_MOD", "/opt/humanevalx/go_mod")
+            if os.path.isdir(go_module_root):
                 for fname in ("go.mod", "go.sum"):
                     src = os.path.join(go_module_root, fname)
-                    if os.path.exists(src):
-                        shutil.copy(src, tmp_dir)
+                    if os.path.isfile(src):
+                        shutil.copy(src, os.path.join(tmp_dir, fname))
             try:
                 exec_result = None
                 with time_limit(timeout):
