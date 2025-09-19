@@ -25,6 +25,48 @@ LANGUAGE_NAME = {
 }
 
 
+_TRANSLATION_TAGS = {
+    "python": "Python:\n",
+    "java": "Java:\n",
+    "go": "Go:\n",
+    "js": "JavaScript:\n",
+    "javascript": "JavaScript:\n",
+    "cpp": "C++:\n",
+    "c++": "C++:\n",
+    "rust": "Rust:\n",
+}
+
+
+def _strip_translation_prompt(prompt: str, language: str, canonical: str = "") -> str:
+    """Normalize prompts emitted by translate_humaneval_x.* scripts.
+
+    Those prompts start with "code translation" and contain both source and
+    target blocks. For evaluation we only want the target language declaration.
+    When a canonical prompt is provided (standard HumanEval-X dataset), prefer
+    to reuse it so docstrings/examples remain intact.
+    """
+    if not prompt:
+        return canonical
+
+    lower_prompt = prompt.lower()
+    if "code translation" not in lower_prompt:
+        return prompt
+
+    if canonical:
+        return canonical
+
+    tag = _TRANSLATION_TAGS.get(language.lower())
+    if not tag:
+        return prompt
+
+    idx = prompt.rfind(tag)
+    if idx == -1:
+        return prompt
+
+    trimmed = prompt[idx + len(tag):]
+    return trimmed.lstrip("\n")
+
+
 def _extract_translation_target(path: str) -> Optional[str]:
     """Extract target language token from filename/path.
 
@@ -66,8 +108,10 @@ def process_humaneval_test(sample, problems, example_test=False):
     task_id = sample["task_id"]
     language = task_id.split("/")[0].lower()
 
-    # Fallback to dataset prompt if not provided in sample
-    prompt = sample.get("prompt", problems.get(task_id, {}).get("prompt", ""))
+    # Prefer canonical dataset prompt but tolerate translation-formatted strings
+    canonical_prompt = problems.get(task_id, {}).get("prompt", "")
+    prompt = sample.get("prompt", canonical_prompt)
+    prompt = _strip_translation_prompt(prompt, language, canonical_prompt)
     if example_test and "example_test" in problems[task_id] and problems[task_id]["example_test"] != "":
         test = problems[task_id]["example_test"]
     else:
