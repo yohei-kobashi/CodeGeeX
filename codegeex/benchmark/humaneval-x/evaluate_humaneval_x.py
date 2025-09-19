@@ -67,6 +67,21 @@ def _strip_translation_prompt(prompt: str, language: str, canonical: str = "") -
     return trimmed.lstrip("\n")
 
 
+def _ensure_go_module_template_once():
+    """Warn if Go tests cannot locate the pre-baked module template."""
+    if getattr(_ensure_go_module_template_once, "_checked", False):
+        return
+
+    template = os.environ.get("HUMANEVALX_GO_MOD", "/opt/humanevalx/go_mod")
+    if not (os.path.isdir(template) and os.path.isfile(os.path.join(template, "go.mod"))):
+        print(
+            "[warn] Go module template missing; testify imports may fail. "
+            "Set HUMANEVALX_GO_MOD to a directory containing go.mod/go.sum.",
+            file=sys.stderr,
+        )
+    _ensure_go_module_template_once._checked = True
+
+
 def _extract_translation_target(path: str) -> Optional[str]:
     """Extract target language token from filename/path.
 
@@ -260,6 +275,7 @@ def evaluate_functional_correctness(
         completion_id = Counter()
         n_samples = 0
         results = defaultdict(list)
+        go_template_checked = False
 
         if test_groundtruth:
             print("Testing ground truth...", file=sys.stderr)
@@ -268,6 +284,9 @@ def evaluate_functional_correctness(
                 lang = task_id.split("/")[0].lower()
                 if lang == "javascript":
                     lang = "js"
+                if lang == "go" and not go_template_checked:
+                    _ensure_go_module_template_once()
+                    go_template_checked = True
                 tmp_dir_ = os.path.join(tmp_dir, lang, "evaluation")
                 sample["generation"] = sample["canonical_solution"]
                 sample["test_code"] = process_humaneval_test(sample, problems, example_test)
@@ -295,6 +314,9 @@ def evaluate_functional_correctness(
                     task_id = f"{LANGUAGE_NAME[lang]}/{task_id}"
                 if lang == "javascript":
                     lang = "js"
+                if lang == "go" and not go_template_checked:
+                    _ensure_go_module_template_once()
+                    go_template_checked = True
                 tmp_dir_ = os.path.join(tmp_dir, lang, "evaluation")
                 sample["task_id"] = task_id
                 # Support both 'generation' and 'generated' fields in inputs
