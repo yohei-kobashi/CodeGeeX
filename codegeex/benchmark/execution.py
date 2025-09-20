@@ -252,7 +252,6 @@ def check_correctness(
             shutil.rmtree(tmp_dir)
         elif "rust" in language_type.lower():
             import os
-            import subprocess
 
             WD: str = os.path.dirname(os.path.abspath(__file__))
             RUST_DIR: str = os.path.join(WD, "rust")
