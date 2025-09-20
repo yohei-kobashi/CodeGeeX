@@ -250,16 +250,17 @@ def check_correctness(
                     result.append("timed out")
 
             shutil.rmtree(tmp_dir)
-        elif "rust" in language_type.lower():  
-            import os         
-            
+        elif "rust" in language_type.lower():
+            import os
+            import subprocess
+
             WD: str = os.path.dirname(os.path.abspath(__file__))
             RUST_DIR: str = os.path.join(WD, "rust")
             RUST_SRC: str = os.path.join(RUST_DIR, "src")
             RUST_BIN: str = os.path.join(RUST_SRC, "bin")
             RUST_TMP_DIR: str = os.path.join(RUST_DIR, "tmp")
             RUST_LOGS: str = os.path.join(RUST_TMP_DIR, "logs")
-            RUST_EXT: str = ".rs" 
+            RUST_EXT: str = ".rs"
 
             # Create mandatory tmp directories
             os.makedirs(RUST_TMP_DIR, exist_ok=True)
@@ -267,65 +268,118 @@ def check_correctness(
             os.makedirs(RUST_SRC, exist_ok=True)
             os.makedirs(RUST_BIN, exist_ok=True)
 
-            with tempfile.NamedTemporaryFile(dir = RUST_BIN, delete=False) as f:
-                #temporal file name
+            with tempfile.NamedTemporaryFile(dir=RUST_BIN, delete=False) as f:
+                # temporal file name
                 file_prefix = sample["task_id"].lower().replace("/", "_")
-                file_name:str =  file_prefix +RUST_EXT
-                
+                file_name: str = file_prefix + RUST_EXT
+
                 os.rename(f.name, os.path.join(RUST_BIN, file_name))
-                
+
                 # Sample to pure Rust function
                 rust_code: str = sample["test_code"]
 
                 # dump the rust source code in the target temporal file
-                f.write(rust_code.encode('utf-8'))
+                f.write(rust_code.encode("utf-8"))
 
-            # Proceed towards Rust binaries compilation. Therefore move to Rust module root dir.
-            os.chdir(RUST_DIR)
-
-            # Two possible outcomes
-            # Pass OR Fail compilation
             log_filename: str = file_prefix + ".jsonl"
             log_path: str = os.path.join(RUST_LOGS, log_filename)
-            cargo_check: str = (
-                "cargo check --bin "
-                + file_prefix
-                + " --message-format json >> "
-                + log_path
-                + " 2>&1"
-            )
-            # Compilation build status
-            returned_val_compilation: int
-            
-            # Overwrite file content
-            if os.path.exists(log_path):
-                if(file_size := os.path.getsize(log_path)) >= 0: 
-                    os.remove(log_path)
-                    returned_val_compilation = os.system(cargo_check)
 
-            else: 
-                returned_val_compilation = os.system(cargo_check)
+            # reset log file before each run
+            with open(log_path, "w", encoding="utf-8"):
+                pass
 
-            # 0 means success   
-            if returned_val_compilation == 0:
+            def parse_cargo_messages(stdout: str, stderr: str) -> str:
+                messages: List[str] = []
+                for line in stdout.splitlines():
+                    trimmed = line.strip()
+                    if not trimmed:
+                        continue
+                    try:
+                        payload = json.loads(trimmed)
+                    except json.JSONDecodeError:
+                        continue
 
-                #Execution pipeline
-                cargo_test: str = (
-                    "cargo test --bin "
-                    + file_prefix
-                    + " --message-format json >> "
-                    + log_path
-                    + " 2>&1"
-                )
-                returned_val_execution = os.system(cargo_test)
-                
-                if returned_val_execution == 0:
+                    reason = payload.get("reason")
+                    if reason == "compiler-message":
+                        message_payload = payload.get("message", {})
+                        level = message_payload.get("level")
+                        if level in {"error", "failure-note"}:
+                            rendered = message_payload.get("rendered") or message_payload.get("message")
+                            if rendered:
+                                messages.append(rendered.strip())
+                    elif reason == "build-script-exit" and payload.get("exit_code"):
+                        exit_code = payload.get("exit_code")
+                        if exit_code:
+                            package_id = payload.get("package_id", "build script")
+                            messages.append(
+                                f"build script for {package_id} exited with code {exit_code}"
+                            )
+                    elif reason == "test" and payload.get("event") == "failed":
+                        name = payload.get("name")
+                        stdout_msg = (payload.get("stdout") or "").strip()
+                        if name and stdout_msg:
+                            messages.append(f"test {name} failed:\n{stdout_msg}")
+                        elif name:
+                            messages.append(f"test {name} failed")
+                        elif stdout_msg:
+                            messages.append(stdout_msg)
+
+                if not messages:
+                    stderr_text = (stderr or "").strip()
+                    if stderr_text:
+                        messages.append(stderr_text)
+
+                return "\n".join(messages).strip()
+
+            def run_cargo(cmd: List[str]) -> Tuple[int, str]:
+                try:
+                    proc = subprocess.run(
+                        cmd,
+                        cwd=RUST_DIR,
+                        capture_output=True,
+                        text=True
+                    )
+                except FileNotFoundError as exc:
+                    error_text = str(exc)
+                    with open(log_path, "a", encoding="utf-8") as log_file:
+                        log_file.write(error_text)
+                    return 1, error_text
+
+                with open(log_path, "a", encoding="utf-8") as log_file:
+                    if proc.stdout:
+                        log_file.write(proc.stdout)
+                    if proc.stderr:
+                        log_file.write(proc.stderr)
+
+                parsed = parse_cargo_messages(proc.stdout, proc.stderr)
+                return proc.returncode, parsed
+
+            compile_rc, compile_msg = run_cargo([
+                "cargo",
+                "check",
+                "--bin",
+                file_prefix,
+                "--message-format",
+                "json",
+            ])
+
+            if compile_rc != 0:
+                detail = compile_msg or "compilation error"
+                result.append(f"failed: {detail}")
+            else:
+                test_rc, test_msg = run_cargo([
+                    "cargo",
+                    "test",
+                    "--bin",
+                    file_prefix,
+                    "--message-format",
+                    "json",
+                ])
+                if test_rc == 0:
                     result.append("passed")
                 else:
-                   result.append(f"failed: execution error") 
-
-            else:
-                result.append(f"failed: compilation error")
+                    detail = test_msg or "execution error"
+                    result.append(f"failed: {detail}")
 
 
         elif "java" in language_type.lower():
