@@ -108,9 +108,9 @@ def process_humaneval_test(sample, problems, example_test=False):
     language = task_id.split("/")[0].lower()
 
     # Prefer canonical dataset prompt but tolerate translation-formatted strings
-    canonical_prompt = problems.get(task_id, {}).get("prompt", "")
-    prompt = sample.get("prompt", canonical_prompt)
-    prompt = _strip_translation_prompt(prompt, language, canonical_prompt)
+    canonical_declaration = problems.get(task_id, {}).get("declaration", "")
+    declaration = sample.get("declaration", canonical_declaration).lstrip()
+    # prompt = _strip_translation_prompt(prompt, language, canonical_prompt)
     if example_test and "example_test" in problems[task_id] and problems[task_id]["example_test"] != "":
         test = problems[task_id]["example_test"]
     else:
@@ -126,20 +126,20 @@ def process_humaneval_test(sample, problems, example_test=False):
             code_.append(line)
         code = "\n".join(code_)
         test_setup = "\n".join(IMPORT_HELPER["python"]) + "\n"
-        test_string = test_setup + prompt + code + "\n" + test + "\n"
+        test_string = test_setup + declaration + code + "\n" + test + "\n"
     elif language == "cpp":
         test_set_up = ""
         for s in IMPORT_HELPER["cpp"]:
-            if s not in prompt:
+            if s not in declaration:
                 test_set_up += s + "\n"
-        test_string = test_set_up + "\n" + prompt + code + "\n" + test
+        test_string = test_set_up + "\n" + declaration + code + "\n" + test
     elif language == "java":
-        test_string = prompt + code + "\n" + test
+        test_string = declaration + code + "\n" + test
     elif language == "js" or language == "javascript":
-        test_string = prompt + code + "\n" + test
+        test_string = declaration + code + "\n" + test
     elif language == "go":
         import_string = problems[task_id]["import"]
-        prompt = prompt.replace(import_string, "")
+        declaration = declaration.replace(import_string, "")
         if example_test and "example_test" in problems[task_id]:
             test = problems[task_id]["example_test"]
         else:
@@ -157,9 +157,9 @@ def process_humaneval_test(sample, problems, example_test=False):
                     other_pkgs.append(f"\"{pkg}\"")
         if other_pkgs:
             import_other_pkgs = "import (\n" + "    ".join([p + "\n" for p in other_pkgs]) + ")"
-            test_string = test_setup + "\n" + import_other_pkgs + "\n" + prompt + code + "\n" + test
+            test_string = test_setup + "\n" + import_other_pkgs + "\n" + declaration + code + "\n" + test
         else:
-            test_string = test_setup + "\n" + prompt + code + "\n" + test
+            test_string = test_setup + "\n" + declaration + code + "\n" + test
         if "github.com/stretchr/testify/assert" in problems[task_id]["test_setup"]:
             stub = """
 type humanevalAssert struct {\n    t *testing.T\n}\n\nfunc (a *humanevalAssert) Equal(expected, actual interface{}, msgAndArgs ...interface{}) bool {\n    if !reflect.DeepEqual(expected, actual) {\n        if len(msgAndArgs) > 0 {\n            a.t.Errorf("assertion failed: %v", msgAndArgs[0])\n        } else {\n            a.t.Errorf("assertion failed: expected %v got %v", expected, actual)\n        }\n        return false\n    }\n    return true\n}\n\ntype humanevalAssertPkg struct{}\n\nfunc (humanevalAssertPkg) New(t *testing.T) *humanevalAssert {\n    t.Helper()\n    return &humanevalAssert{t: t}\n}\n\nvar assert = humanevalAssertPkg{}\n"""
@@ -167,7 +167,7 @@ type humanevalAssert struct {\n    t *testing.T\n}\n\nfunc (a *humanevalAssert) 
     elif language == "rust":
         main = "\nfn main(){ \n } \n"
         declaration = problems[task_id]["declaration"]
-        test_string = main + declaration + prompt + code + test
+        test_string = main + declaration + declaration + code + test
 
     return test_string
 
