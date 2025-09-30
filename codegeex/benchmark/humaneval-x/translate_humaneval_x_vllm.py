@@ -35,7 +35,7 @@ def add_args(parser):
     group.add_argument("--max-tokens", type=int, default=1024)
     group.add_argument("--output-file", type=str, default="translations.jsonl")
     group.add_argument("--seed", type=int, default=42)
-    group.add_argument("--use_sft_prompt_template", type=bool, default=True)
+    group.add_argument("--use-sft-prompt-template", type=bool, default=True)
     # When provided, use external vLLM OpenAI-compatible server instead of local vLLM
     group.add_argument(
         "--server-url",

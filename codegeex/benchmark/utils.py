@@ -104,7 +104,7 @@ def read_translation_dataset(
                 prompt += source_code + "\n"
                 prompt += f"{target_lang}:\n"
                 prompt += target_declaration
-                dataset_src[k]["prompt"] = prompt
+            dataset_src[k]["prompt"] = prompt
     else:
         raise f"Dataset: {dataset_type} not supported."
 
