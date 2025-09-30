@@ -72,27 +72,39 @@ def read_translation_dataset(
     lang_src: str = None,
     lang_tgt: str = None,
     dataset_type: str = "humaneval",
+    use_sft_prompt_template: bool = False
 ) -> Dict:
     if "humaneval" in dataset_type.lower():
         dataset_src = {task["task_id"]: task for task in stream_jsonl(data_file_src)}
         dataset_tgt = {task["task_id"].split("/")[-1]: task for task in stream_jsonl(data_file_tgt)}
         for k, sample in dataset_src.items():
-            prompt = "code translation\n"
+            # source_lang = dataset_src
             if lang_src == "cpp":
-                prompt += "C++:\n"
+                source_lang = "C++"
             elif lang_src == "js":
-                prompt += "JavaScript:\n"
+                source_lang = "Javascript"
             else:
-                prompt += f"{lang_src}:\n".capitalize()
-            prompt += dataset_src[k]["declaration"] + "\n" + dataset_src[k]["canonical_solution"].rstrip() + "\n"
+                source_lang = lang_src.capitalize()
+            # target_lang = dataset_tgt
             if lang_tgt == "cpp":
-                prompt += "C++:\n"
+                target_lang = "C++"
             elif lang_tgt == "js":
-                prompt += "JavaScript:\n"
+                target_lang = "Javascript"
             else:
-                prompt += f"{lang_tgt}:\n".capitalize()
-            prompt += dataset_tgt[k.split("/")[-1]]["declaration"]
-            dataset_src[k]["prompt"] = prompt
+                target_lang = lang_tgt.capitalize()
+            # source_code = declaration + canonical_solution
+            source_code = dataset_src[k]["declaration"] + "\n" + dataset_src[k]["canonical_solution"].rstrip()
+            # target_declaration = declaration
+            target_declaration = dataset_tgt[k.split("/")[-1]]["declaration"]
+            if use_sft_prompt_template:
+                prompt = "You are a code translator.\nYour job is to translate code from {source_lang} to {target_lang}.\n\nHere is the {source_lang} code:\n{source_code}\n\n{target_declaration}".format(source_lang=source_lang, target_lang=target_lang, source_code=source_code, target_declaration=target_declaration)
+            else:
+                prompt = "code translation\n"
+                prompt += f"{source_lang}:\n"
+                prompt += source_code + "\n"
+                prompt += f"{target_lang}:\n"
+                prompt += target_declaration
+                dataset_src[k]["prompt"] = prompt
     else:
         raise f"Dataset: {dataset_type} not supported."
 
