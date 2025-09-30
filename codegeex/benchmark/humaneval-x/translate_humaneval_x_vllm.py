@@ -7,10 +7,12 @@ import random
 import argparse
 import logging
 import json
-import urllib.request
 import urllib.error
+import urllib.request
 
-from codegeex.benchmark.utils import read_translation_dataset, cleanup_code
+from codegeex.benchmark.utils import (cleanup_code,
+                                      is_code_generation_finished,
+                                      read_translation_dataset)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -55,121 +57,28 @@ def add_args(parser):
     return parser
 
 
-def _strip_leading_to_code(text: str, lang: str) -> str:
-    """Remove leading instruction/markdown lines until the first plausible
-    code construct for the target language. Best-effort heuristic.
-    """
-    import re
-    lines = text.splitlines()
-    # Drop obvious instruction lines at the start
-    drop_prefixes = (
-        "note:",
-        "do not include",
-        "don't include",
-        "please",
-        "output only",
-        "only output",
-        "the function signature must match",
-        "the code should",
-        "return only",
-        "do not output",
-        "you should only",
-    )
-    i = 0
-    while i < len(lines) and lines[i].strip():
-        l = lines[i].strip().lower()
-        if any(l.startswith(p) for p in drop_prefixes):
-            i += 1
-            continue
-        break
+def _truncate_to_finished(code: str, language: str, dataset: str) -> str:
+    """Truncate the generated snippet at the first point where
+    is_code_generation_finished would return True when streaming."""
+    if not code or not language:
+        return code
 
-    cand = "\n".join(lines[i:])
+    language = language.lower()
+    collected = []
+    finished = None
+    for line in code.splitlines(keepends=True):
+        collected.append(line)
+        candidate = "".join(collected)
+        try:
+            if is_code_generation_finished(candidate,
+                                            language_type=language,
+                                            dataset=dataset):
+                finished = candidate
+                break
+        except Exception:
+            break
 
-    # Language-specific first-token regex
-    patterns = {
-        "python": r"(?m)^\s*def\s+\w+\s*\(",
-        "js": r"(?m)^\s*function\s+\w+\s*\(|^\s*const\s+\w+\s*=\s*\(",
-        "go": r"(?m)^\s*func\s+\w+\s*\(",
-        "cpp": r"(?m)^\s*[\w:<>,\[\]&\*\s]+\s+\w+\s*\(.*\)\s*\{",
-        "java": r"(?m)^\s*(public|private|protected|static|final|\w[\w<>\[\]]+\s+\w+)\s*\(.*\)\s*\{",
-        "rust": r"(?m)^\s*fn\s+\w+\s*\(",
-    }
-    pat = patterns.get(lang.lower())
-    if not pat:
-        return cand
-    m = re.search(pat, cand)
-    if not m:
-        return cand
-    start = cand.rfind("\n", 0, m.start()) + 1
-    return cand[start:]
-
-
-def _extract_go_body(text: str) -> str:
-    """If a full Go function is present (starting with `func <Name>(`),
-    extract the body between the first '{' and its matching '}'. Otherwise
-    return the text unchanged.
-    """
-    s = text
-    try:
-        idx = s.find("func ")
-        if idx == -1:
-            return s
-        brace = s.find("{", idx)
-        if brace == -1:
-            return s
-        # Simple brace matching
-        depth = 0
-        end = -1
-        for i in range(brace, len(s)):
-            c = s[i]
-            if c == '{':
-                depth += 1
-            elif c == '}':
-                depth -= 1
-                if depth == 0:
-                    end = i
-                    break
-        if end == -1:
-            return s
-        body = s[brace + 1:end]
-        # Trim leading/trailing whitespace/newlines
-        return body.strip('\n')
-    except Exception:
-        return text
-
-
-def _extract_java_body(text: str) -> str:
-    """Extract the Java method body from a full method snippet.
-    If a method signature like `public ... name(...) {` is found, return the
-    content inside its outermost braces. Otherwise, return text unchanged.
-    """
-    s = text
-    try:
-        # Find the beginning of a plausible Java method signature
-        import re
-        m = re.search(r"(?m)^\s*(public|private|protected|static|final|synchronized|native|abstract|\w[\w<>\[\]]+\s+\w+)\s*\(.*\)\s*\{", s)
-        if not m:
-            return s
-        brace = s.find("{", m.start())
-        if brace == -1:
-            return s
-        depth = 0
-        end = -1
-        for i in range(brace, len(s)):
-            c = s[i]
-            if c == '{':
-                depth += 1
-            elif c == '}':
-                depth -= 1
-                if depth == 0:
-                    end = i
-                    break
-        if end == -1:
-            return s
-        body = s[brace + 1:end]
-        return body.strip('\n')
-    except Exception:
-        return text
+    return finished if finished is not None else code
 
 
 def _patch_hf_autoconfig_register_allow_duplicates():
@@ -341,26 +250,39 @@ def main():
                 # 書き出し
                 for j, out in enumerate(outputs):
                     # out.outputs は候補のリスト（通常は1つ）:
-                    text = out.outputs[0].text if out.outputs else ""
-                    # Drop leading instructions/markdown until code start.
+                    seq = out.outputs[0] if out.outputs else None
+                    text = seq.text if seq else ""
                     lang = (args.language_tgt_type or args.language_src_type or "")
-                    primed = _strip_leading_to_code(text, lang)
-                    if lang.lower() == "go":
-                        primed = _extract_go_body(primed)
-                        cleaned = cleanup_code(primed, language_type="go", dataset=args.dataset)
-                    elif lang.lower() == "java":
-                        # For Java, keep only the method body and avoid extra trimming
-                        cleaned = _extract_java_body(primed)
-                    elif lang.lower() in ("js", "javascript", "cpp", "c++"):
-                        # Extract the outer braced block (function body) if present
-                        cleaned = _extract_braced_body(primed)
+                    truncated = _truncate_to_finished(text, lang, args.dataset)
+                    cleaned = cleanup_code(truncated, language_type=lang or "", dataset=args.dataset)
+
+                    # Megatron-format metadata: cumulative logprob (if available),
+                    # finishing status, and full token ids (prompt + generation).
+                    if seq is not None:
+                        try:
+                            cumulative_logprob = float(seq.cumulative_logprob)
+                        except Exception:
+                            cumulative_logprob = 0.0
+                        finish_reason = getattr(seq, "finish_reason", None)
+                        finish = 2 if finish_reason in ("stop", "eos") else 1
+                        try:
+                            prompt_token_ids = list(getattr(out, "prompt_token_ids", []) or [])
+                            generated_token_ids = list(seq.token_ids or [])
+                            token_ids = prompt_token_ids + generated_token_ids
+                        except Exception:
+                            token_ids = []
                     else:
-                        cleaned = cleanup_code(primed, language_type=lang, dataset=args.dataset)
+                        cumulative_logprob = 0.0
+                        finish = 1
+                        token_ids = []
+
                     record = {
                         "task_id": task_ids[j],
                         "prompt": prompts[j],
                         "generation": cleaned,
-                        "generated": text,
+                        "scores": cumulative_logprob,
+                        "finish": finish,
+                        "output": token_ids,
                     }
                     outfile.write(json.dumps(record, ensure_ascii=False) + "\n")
             else:
@@ -379,57 +301,23 @@ def main():
                         timeout=args.request_timeout,
                     )
                     lang = (args.language_tgt_type or args.language_src_type or "")
-                    primed = _strip_leading_to_code(text, lang)
-                    if lang.lower() == "go":
-                        primed = _extract_go_body(primed)
-                        cleaned = cleanup_code(primed, language_type="go", dataset=args.dataset)
-                    elif lang.lower() == "java":
-                        cleaned = _extract_java_body(primed)
-                    elif lang.lower() in ("js", "javascript", "cpp", "c++"):
-                        cleaned = _extract_braced_body(primed)
-                    else:
-                        cleaned = cleanup_code(primed, language_type=lang, dataset=args.dataset)
+                    truncated = _truncate_to_finished(text, lang, args.dataset)
+                    cleaned = cleanup_code(truncated, language_type=lang or "", dataset=args.dataset)
+
+                    # サーバーモードではトークン列やスコアが得られない場合が多いので既定値を設定
                     record = {
                         "task_id": task_ids[j],
                         "prompt": prompts[j],
                         "generation": cleaned,
-                        "generated": text,
+                        "scores": 0.0,
+                        "finish": 1,
+                        "output": [],
                     }
                     outfile.write(json.dumps(record, ensure_ascii=False) + "\n")
 
             n_done += len(batch)
             elapsed = time.perf_counter() - start_time
             logger.info(f"Processed {n_done}/{total} tasks (elapsed: {elapsed:.1f}s)")
-
-def _extract_braced_body(text: str) -> str:
-    """Generic: extract text inside the first balanced {...} block.
-    If not found, return the original text.
-    """
-    s = text
-    try:
-        brace = s.find("{")
-        if brace == -1:
-            return s
-        depth = 0
-        end = -1
-        for i in range(brace, len(s)):
-            c = s[i]
-            if c == '{':
-                depth += 1
-            elif c == '}':
-                depth -= 1
-                if depth == 0:
-                    end = i
-                    break
-        if end == -1:
-            return s
-        body = s[brace + 1:end]
-        return body.strip('\n')
-    except Exception:
-        return text
-
-    logger.info(f"All done. Results written to {args.output_file}")
-
 
 if __name__ == "__main__":
     main()

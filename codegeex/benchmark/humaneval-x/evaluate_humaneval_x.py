@@ -25,6 +25,47 @@ LANGUAGE_NAME = {
 }
 
 
+_TRANSLATION_TAGS = {
+    "python": "Python:\n",
+    "java": "Java:\n",
+    "go": "Go:\n",
+    "js": "JavaScript:\n",
+    "javascript": "JavaScript:\n",
+    "cpp": "C++:\n",
+    "c++": "C++:\n",
+    "rust": "Rust:\n",
+}
+
+
+def _strip_translation_prompt(prompt: str, language: str, canonical: str = "") -> str:
+    """Normalize prompts emitted by translate_humaneval_x.* scripts.
+
+    Those prompts start with "code translation" and contain both source and
+    target blocks. For evaluation we only want the target language declaration.
+    When a canonical prompt is provided (standard HumanEval-X dataset), prefer
+    to reuse it so docstrings/examples remain intact.
+    """
+    if not prompt:
+        return canonical
+
+    lower_prompt = prompt.lower()
+    if "code translation" not in lower_prompt:
+        return prompt
+
+    if canonical:
+        return canonical
+
+    tag = _TRANSLATION_TAGS.get(language.lower())
+    if not tag:
+        return prompt
+
+    idx = prompt.rfind(tag)
+    if idx == -1:
+        return prompt
+
+    trimmed = prompt[idx + len(tag):]
+    return trimmed.lstrip("\n")
+
 def _extract_translation_target(path: str) -> Optional[str]:
     """Extract target language token from filename/path.
 
@@ -66,8 +107,10 @@ def process_humaneval_test(sample, problems, example_test=False):
     task_id = sample["task_id"]
     language = task_id.split("/")[0].lower()
 
-    # Fallback to dataset prompt if not provided in sample
-    prompt = sample.get("prompt", problems.get(task_id, {}).get("prompt", ""))
+    # Prefer canonical dataset prompt but tolerate translation-formatted strings
+    canonical_prompt = problems.get(task_id, {}).get("prompt", "")
+    prompt = sample.get("prompt", canonical_prompt)
+    prompt = _strip_translation_prompt(prompt, language, canonical_prompt)
     if example_test and "example_test" in problems[task_id] and problems[task_id]["example_test"] != "":
         test = problems[task_id]["example_test"]
     else:
@@ -102,6 +145,10 @@ def process_humaneval_test(sample, problems, example_test=False):
         else:
             test = problems[task_id]["test"]
         test_setup = problems[task_id]["test_setup"]
+        if "github.com/stretchr/testify/assert" in test_setup:
+            test_setup = test_setup.replace('\n    "github.com/stretchr/testify/assert"\n', '\n')
+            if "\"reflect\"" not in test_setup:
+                test_setup = test_setup.replace("import (\n", "import (\n    \"reflect\"\n", 1)
         other_pkgs = []
         for pkg in IMPORT_HELPER["go"]:
             if pkg not in test_setup:
@@ -113,6 +160,10 @@ def process_humaneval_test(sample, problems, example_test=False):
             test_string = test_setup + "\n" + import_other_pkgs + "\n" + prompt + code + "\n" + test
         else:
             test_string = test_setup + "\n" + prompt + code + "\n" + test
+        if "github.com/stretchr/testify/assert" in problems[task_id]["test_setup"]:
+            stub = """
+type humanevalAssert struct {\n    t *testing.T\n}\n\nfunc (a *humanevalAssert) Equal(expected, actual interface{}, msgAndArgs ...interface{}) bool {\n    if !reflect.DeepEqual(expected, actual) {\n        if len(msgAndArgs) > 0 {\n            a.t.Errorf("assertion failed: %v", msgAndArgs[0])\n        } else {\n            a.t.Errorf("assertion failed: expected %v got %v", expected, actual)\n        }\n        return false\n    }\n    return true\n}\n\ntype humanevalAssertPkg struct{}\n\nfunc (humanevalAssertPkg) New(t *testing.T) *humanevalAssert {\n    t.Helper()\n    return &humanevalAssert{t: t}\n}\n\nvar assert = humanevalAssertPkg{}\n"""
+            test_string += "\n" + stub
     elif language == "rust":
         main = "\nfn main(){ \n } \n"
         declaration = problems[task_id]["declaration"]
@@ -160,6 +211,21 @@ def _lang_from_problem_file(problem_file: str) -> Optional[str]:
     }.get(raw, raw)
 
 
+# Usage notes for evaluate_functional_correctness arguments:
+#   input_file: JSONL (optionally .gz) containing model generations with task ids.
+#   tmp_dir: scratch directory where language-specific execution sandboxes are created.
+#   n_workers: number of threads used to run test suites in parallel.
+#   timeout: per-sample execution timeout in seconds when running tests.
+#   problem_file: canonical HumanEval(-X) problem definitions used for prompts/tests.
+#   out_dir: optional folder for aggregated result JSONL; defaults beside input_file.
+#   k: pass@k cutoffs to report when full coverage is available.
+#   test_groundtruth: run the bundled reference solutions instead of model outputs.
+#   example_test: evaluate against example tests rather than hidden ones when available.
+# Container example (mirrors scripts/evaluate_humanevalx_all.sh): from repo root run
+#   singularity run -B "$(pwd)":/workspace codegeex/benchmark/humaneval-x/humanevalx.sif \
+#     --input_file /workspace/path/to/generated.jsonl \
+#     --problem_file /workspace/codegeex/benchmark/humaneval-x/<lang>/data/humaneval_<lang>.jsonl.gz \
+#     --tmp_dir /workspace/codegeex/benchmark/humaneval-x --n_workers 64 --timeout 5
 def evaluate_functional_correctness(
         input_file: str = None,
         tmp_dir: str = "./",

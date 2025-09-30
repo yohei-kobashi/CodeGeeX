@@ -3,25 +3,25 @@
 #PBS -l select=1
 #PBS -W group_list=go25
 #PBS -j oe
-module purge
-module load cuda/12.8
-module load cudnn/9.10.1.4
-module load nvidia/25.3
-module load nv-hpcx/25.3
-source /work/gj26/b20048/miniconda3/etc/profile.d/conda.sh
-conda activate inference_env
-export CUDA_VISIBLE_DEVICES=0
-export PATH="$CONDA_PREFIX/bin:/opt/rh/gcc-toolset-14/root/usr/bin:$PATH"
+# module purge
+# module load cuda/12.8
+# module load cudnn/9.10.1.4
+# module load nvidia/25.3
+# module load nv-hpcx/25.3
+# source /work/gj26/b20048/miniconda3/etc/profile.d/conda.sh
+# conda activate inference_env
+# export CUDA_VISIBLE_DEVICES=0
+# export PATH="$CONDA_PREFIX/bin:/opt/rh/gcc-toolset-14/root/usr/bin:$PATH"
 
-export CC=/opt/rh/gcc-toolset-14/root/usr/bin/gcc
-export CXX=/opt/rh/gcc-toolset-14/root/usr/bin/g++
-export TRITON_CC="$CC"
-export TRITON_CXX="$CXX"
-export CUDAHOSTCXX="$CXX"
+# export CC=/opt/rh/gcc-toolset-14/root/usr/bin/gcc
+# export CXX=/opt/rh/gcc-toolset-14/root/usr/bin/g++
+# export TRITON_CC="$CC"
+# export TRITON_CXX="$CXX"
+# export CUDAHOSTCXX="$CXX"
 
 export PYTHONNOUSERSITE=1
 cd CodeGeeX
-# python -m codegeex.benchmark.humaneval-x.translate_humaneval_x_vllm --model-name-or-path /work/go25/share/model/Qwen3-Coder-30B-A3B-Instruct-mcore-hf_code_trans_489pairs_0826 --src-path codegeex/benchmark/humaneval-x/cpp/data/humaneval_cpp.jsonl.gz --tgt-path codegeex/benchmark/humaneval-x/go/data/humaneval_go.jsonl.gz --language-src-type cpp --language-tgt-type go --batch-size 128 --output-file codegeex/benchmark/humaneval-x/cpp/evaluation0826_base/humaneval_cpp_to_go.jsonl
+python -m codegeex.benchmark.humaneval-x.translate_humaneval_x_vllm --model-name-or-path /work/go25/share/model/Qwen3-Coder-30B-A3B-Instruct-mcore-hf_code_trans_489pairs_0826 --src-path codegeex/benchmark/humaneval-x/cpp/data/humaneval_cpp.jsonl.gz --tgt-path codegeex/benchmark/humaneval-x/go/data/humaneval_go.jsonl.gz --language-src-type cpp --language-tgt-type go --batch-size 128 --output-file codegeex/benchmark/humaneval-x/cpp/evaluation0826_base/humaneval_cpp_to_go.jsonl
 python -m codegeex.benchmark.humaneval-x.translate_humaneval_x_vllm --model-name-or-path /work/go25/share/model/Qwen3-Coder-30B-A3B-Instruct-mcore-hf_code_trans_489pairs_0826 --src-path codegeex/benchmark/humaneval-x/cpp/data/humaneval_cpp.jsonl.gz --tgt-path codegeex/benchmark/humaneval-x/java/data/humaneval_java.jsonl.gz --language-src-type cpp --language-tgt-type java --batch-size 128 --output-file codegeex/benchmark/humaneval-x/cpp/evaluation0826_base/humaneval_cpp_to_java.jsonl
 python -m codegeex.benchmark.humaneval-x.translate_humaneval_x_vllm --model-name-or-path /work/go25/share/model/Qwen3-Coder-30B-A3B-Instruct-mcore-hf_code_trans_489pairs_0826 --src-path codegeex/benchmark/humaneval-x/cpp/data/humaneval_cpp.jsonl.gz --tgt-path codegeex/benchmark/humaneval-x/js/data/humaneval_js.jsonl.gz --language-src-type cpp --language-tgt-type js --batch-size 128 --output-file codegeex/benchmark/humaneval-x/cpp/evaluation0826_base/humaneval_cpp_to_js.jsonl
 python -m codegeex.benchmark.humaneval-x.translate_humaneval_x_vllm --model-name-or-path /work/go25/share/model/Qwen3-Coder-30B-A3B-Instruct-mcore-hf_code_trans_489pairs_0826 --src-path codegeex/benchmark/humaneval-x/cpp/data/humaneval_cpp.jsonl.gz --tgt-path codegeex/benchmark/humaneval-x/python/data/humaneval_python.jsonl.gz --language-src-type cpp --language-tgt-type python --batch-size 128 --output-file codegeex/benchmark/humaneval-x/cpp/evaluation0826_base/humaneval_cpp_to_python.jsonl
