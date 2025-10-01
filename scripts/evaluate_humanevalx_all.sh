@@ -5,7 +5,7 @@ set -euo pipefail
 # Evaluate HumanEval-X results for all languages inside a Singularity/Apptainer container.
 #
 # Usage:
-#   scripts/evaluate_humanevalx_all.sh <input_dir> [sif_path] [n_workers] [timeout] [csv_out]
+#   scripts/evaluate_humanevalx_all.sh <input_dir> [sif_path] [n_workers] [timeout] [csv_out] [target_langs]
 #
 # Arguments:
 #   input_dir  : Directory name that exists under each language dir, e.g.
@@ -15,6 +15,8 @@ set -euo pipefail
 #   n_workers  : Number of parallel workers (default: 64)
 #   timeout    : Per-test timeout in seconds (default: 5)
 #   csv_out    : Path to aggregate CSV output (default: <repo>/humanevalx_results.csv)
+#   target_langs : Optional comma-separated target languages to evaluate only
+#                  (e.g., "python" or "java,cpp"). If omitted, evaluate all.
 #
 # Notes:
 # - This script assumes the repository is checked out and that the SIF is already built.
@@ -22,7 +24,7 @@ set -euo pipefail
 #     /workspace -> repository root (for Python imports and runscript expectations)
 
 usage() {
-  echo "Usage: $0 <input_dir> [sif_path] [n_workers] [timeout] [csv_out]" 1>&2
+  echo "Usage: $0 <input_dir> [sif_path] [n_workers] [timeout] [csv_out] [target_langs]" 1>&2
 }
 
 if [[ ${1:-} == "-h" || ${1:-} == "--help" ]]; then
@@ -45,6 +47,7 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "$0")" && pwd)
 REPO_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 HUMX_DIR="$REPO_ROOT/codegeex/benchmark/humaneval-x"
 CSV_OUT="${5:-$REPO_ROOT/humanevalx_results.csv}"
+TARGET_LANGS_RAW="${6:-}"
 
 if [[ ! -d "$HUMX_DIR" ]]; then
   echo "Error: humaneval-x dir not found: $HUMX_DIR" 1>&2
@@ -101,6 +104,20 @@ detect_src_tgt() {
 }
 
 echo "Evaluating input_dir='$INPUT_DIR' across languages: ${langs[*]}"
+
+# Build target language filter (if provided)
+declare -A TARGET_FILTER=()
+if [[ -n "$TARGET_LANGS_RAW" ]]; then
+  TARGET_LANGS_WS=${TARGET_LANGS_RAW//,/ }
+  read -r -a _targets <<< "$TARGET_LANGS_WS"
+  for t in "${_targets[@]}"; do
+    tl=$(norm_lang "$t")
+    [[ -n "$tl" ]] && TARGET_FILTER["$tl"]=1
+  done
+  if ((${#TARGET_FILTER[@]} > 0)); then
+    echo "Filtering to target languages: ${!TARGET_FILTER[*]}"
+  fi
+fi
 
 # Prepare CSV header (truncate if exists)
 echo "language,input_file,pass@1,pass@10,pass@100" > "$CSV_OUT"
@@ -169,6 +186,12 @@ for lang in "${langs[@]}"; do
     fi
 
     container_problem="/workspace/codegeex/benchmark/humaneval-x/$problem_lang/data/humaneval_${problem_lang}.jsonl.gz"
+
+    # If a target filter is specified, skip non-matching target languages
+    if ((${#TARGET_FILTER[@]} > 0)) && [[ -z "${TARGET_FILTER[$problem_lang]:-}" ]]; then
+      echo "  [skip] target '$problem_lang' not in filter"
+      continue
+    fi
 
     if [[ ! -f "$HUMX_DIR/$problem_lang/data/humaneval_${problem_lang}.jsonl.gz" ]]; then
       echo "[skip] $lang: problem file for target '$problem_lang' not found: $HUMX_DIR/$problem_lang/data/humaneval_${problem_lang}.jsonl.gz" 1>&2

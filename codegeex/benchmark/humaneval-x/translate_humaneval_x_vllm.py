@@ -165,13 +165,23 @@ def main():
 
     random.seed(args.seed)
 
+    use_server = args.server_url is not None and len(args.server_url.strip()) > 0
+
+    tokenizer = None
+    if args.model_name_or_path:
+        from transformers import AutoTokenizer
+        tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, trust_remote_code=True)
+
+    use_server = args.server_url is not None and len(args.server_url.strip()) > 0
+
     entries = read_translation_dataset(
         args.src_path,
         args.tgt_path,
         lang_src=args.language_src_type,
         lang_tgt=args.language_tgt_type,
         dataset_type=args.dataset,
-        use_sft_prompt_template=args.use_sft_prompt_template
+        use_sft_prompt_template=args.use_sft_prompt_template,
+        tokenizer=tokenizer
     )
 
     # Duplicate each entry samples_per_problem times and shuffle
@@ -182,8 +192,6 @@ def main():
 
     total = len(tasks)
     logger.info(f"Loaded {len(entries)} problems, total tasks: {total}")
-
-    use_server = args.server_url is not None and len(args.server_url.strip()) > 0
 
     # Common stop markers to curb extra language blocks and markdown
     lang_stops = [

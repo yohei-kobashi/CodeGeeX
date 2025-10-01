@@ -1,7 +1,7 @@
 import os
 from typing import *
 from codegeex.data.data_utils import stream_jsonl, LANGUAGE_TAG
-
+from transformers import PreTrainedTokenizerBase
 
 IMPORT_HELPER = {
     "python": [
@@ -72,7 +72,8 @@ def read_translation_dataset(
     lang_src: str = None,
     lang_tgt: str = None,
     dataset_type: str = "humaneval",
-    use_sft_prompt_template: bool = False
+    use_sft_prompt_template: bool = False,
+    tokenizer: PreTrainedTokenizerBase = None
 ) -> Dict:
     if "humaneval" in dataset_type.lower():
         dataset_src = {task["task_id"]: task for task in stream_jsonl(data_file_src)}
@@ -97,7 +98,14 @@ def read_translation_dataset(
             # target_declaration = declaration
             target_declaration = dataset_tgt[k.split("/")[-1]]["declaration"]
             if use_sft_prompt_template:
-                prompt = "You are a code translator.\nYour job is to translate code from {source_lang} to {target_lang}.\n\nHere is the {source_lang} code:\n{source_code}\n\n{target_declaration}".format(source_lang=source_lang, target_lang=target_lang, source_code=source_code, target_declaration=target_declaration)
+                messages = [
+                    {"role": "system", "content": "You are a code translator."},
+                    {"role": "user", "content": "Your job is to translate code from {source_lang} to {target_lang}.\nHere is the {source_lang} code:\n{source_code}".format(source_lang=source_lang, target_lang=target_lang, source_code=source_code)},
+                    {"role": "assistant", "content": ""}
+                ]
+                prompt = tokenizer.apply_chat_template(
+                    messages, tokenize=False, add_generation_prompt=True
+                )
             else:
                 prompt = "code translation\n"
                 prompt += f"{source_lang}:\n"
