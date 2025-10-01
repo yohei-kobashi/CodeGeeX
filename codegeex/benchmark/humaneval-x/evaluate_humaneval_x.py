@@ -167,7 +167,7 @@ type humanevalAssert struct {\n    t *testing.T\n}\n\nfunc (a *humanevalAssert) 
     elif language == "rust":
         main = "\nfn main(){ \n } \n"
         declaration = problems[task_id]["declaration"]
-        test_string = main + declaration + declaration + code + test
+        test_string = main + declaration + code + test
 
     return test_string
 
