@@ -102,83 +102,101 @@ def check_correctness(
 
             import os
             import shutil
-
-            if "tmp" not in tmp_dir:
-                tmp_dir = os.path.join(tmp_dir, "tmp")
-            tmp_dir = os.path.join(tmp_dir, f"{task_id.replace('/', '-')}-{random_id}")
-            if not os.path.exists(tmp_dir):
-                os.makedirs(tmp_dir)
-
-            os.chdir(tmp_dir)
-            open("main_test.go", "w").write(sample["test_code"])
-
-            go_env = os.environ.copy()
-            go_env["GO111MODULE"] = "off"
+            import shutil as _shutil
 
             try:
-                exec_result = None
-                with time_limit(timeout):
-                    # WARNING
-                    # This program exists to execute untrusted model-generated code. Although
-                    # it is highly unlikely that model-generated code will do something overtly
-                    # malicious in response to this test suite, model-generated code may act
-                    # destructively due to a lack of model capability or alignment.
-                    # Users are strongly encouraged to sandbox this evaluation suite so that it
-                    # does not perform destructive actions on their host or network.
-                    # Once you have read this disclaimer and taken appropriate precautions,
-                    # uncomment the following line and proceed at your own risk:
-                    exec_result = subprocess.run(
-                        ["go", "test", f"-timeout={timeout}s", "main_test.go"],
-                        timeout=timeout,
-                        capture_output=True,
-                        env=go_env,
-                    )
+                if "tmp" not in tmp_dir:
+                    tmp_dir = os.path.join(tmp_dir, "tmp")
+                tmp_dir = os.path.join(tmp_dir, f"{task_id.replace('/', '-')}-{random_id}")
+                if not os.path.exists(tmp_dir):
+                    os.makedirs(tmp_dir)
 
-                if exec_result.returncode == 0:
-                    result.append("passed")
-                else:
-                    if exec_result.stderr:
-                        try:
-                            err = exec_result.stderr.decode()
-                        except Exception:
-                            err = exec_result.stderr
+                os.chdir(tmp_dir)
+                # Write test file
+                with open("main_test.go", "w") as f:
+                    f.write(sample["test_code"])
+
+                # Check if 'go' is discoverable before running
+                try:
+                    _which_go = _shutil.which("go")
+                except Exception:
+                    _which_go = None
+                if not _which_go:
+                    result.append("failed: go binary not found in PATH")
+                    return
+
+                go_env = os.environ.copy()
+                go_env["GO111MODULE"] = "off"
+
+                try:
+                    exec_result = None
+                    with time_limit(timeout):
+                        # WARNING
+                        # This program exists to execute untrusted model-generated code. Although
+                        # it is highly unlikely that model-generated code will do something overtly
+                        # malicious in response to this test suite, model-generated code may act
+                        # destructively due to a lack of model capability or alignment.
+                        # Users are strongly encouraged to sandbox this evaluation suite so that it
+                        # does not perform destructive actions on their host or network.
+                        # Once you have read this disclaimer and taken appropriate precautions,
+                        # uncomment the following line and proceed at your own risk:
+                        exec_result = subprocess.run(
+                            ["go", "test", f"-timeout={timeout}s", "main_test.go"],
+                            timeout=timeout,
+                            capture_output=True,
+                            env=go_env,
+                        )
+
+                    if exec_result.returncode == 0:
+                        result.append("passed")
                     else:
-                        try:
-                            err = exec_result.stdout.decode()
-                        except Exception:
-                            err = exec_result.stdout
-                    result.append(f"failed: {err}")
+                        if exec_result.stderr:
+                            try:
+                                err = exec_result.stderr.decode()
+                            except Exception:
+                                err = exec_result.stderr
+                        else:
+                            try:
+                                err = exec_result.stdout.decode()
+                            except Exception:
+                                err = exec_result.stdout
+                        result.append(f"failed: {err}")
 
-            except subprocess.TimeoutExpired as e:
-                # subprocess timeout provides optional stdout/stderr; include if present
-                detail = ""
-                try:
-                    out = e.stdout.decode() if getattr(e, "stdout", None) else ""
-                except Exception:
-                    out = ""
-                try:
-                    err = e.stderr.decode() if getattr(e, "stderr", None) else ""
-                except Exception:
-                    err = ""
-                detail = err or out
-                if detail:
-                    result.append(f"timed out: {detail}")
-                else:
+                except subprocess.TimeoutExpired as e:
+                    # subprocess timeout provides optional stdout/stderr; include if present
+                    try:
+                        out = e.stdout.decode() if getattr(e, "stdout", None) else ""
+                    except Exception:
+                        out = ""
+                    try:
+                        err = e.stderr.decode() if getattr(e, "stderr", None) else ""
+                    except Exception:
+                        err = ""
+                    detail = (err or out).strip()
+                    if detail:
+                        result.append(f"timed out: {detail}")
+                    else:
+                        result.append("timed out")
+                except FileNotFoundError as e:
+                    # 'go' not found or not executable
+                    result.append(f"failed: {e}")
+                except PermissionError as e:
+                    # Permission denied due to sandbox/seccomp or file perms
+                    result.append(f"failed: {e}")
+                except TimeoutException:
+                    # Guard from our own time_limit
                     result.append("timed out")
-            except FileNotFoundError as e:
-                # 'go' not found or not executable
-                result.append(f"failed: {e}")
-            except PermissionError as e:
-                # Permission denied due to sandbox/seccomp or file perms
-                result.append(f"failed: {e}")
-            except TimeoutException:
-                # Guard from our own time_limit
-                result.append("timed out")
-            except Exception as e:
-                # Surface unexpected errors instead of masking as timeout
-                result.append(f"failed: {type(e).__name__}: {e}")
-
-            shutil.rmtree(tmp_dir)
+                except Exception as e:
+                    # Surface unexpected errors instead of masking as timeout
+                    result.append(f"failed: {type(e).__name__}: {e}")
+            except Exception as setup_err:
+                # Anything failing before invoking 'go' (mkdir/chdir/write/etc.)
+                result.append(f"failed: GoSetupError: {type(setup_err).__name__}: {setup_err}")
+            finally:
+                try:
+                    shutil.rmtree(tmp_dir)
+                except Exception:
+                    pass
         elif "js" in language_type.lower():
             import os
             import shutil
@@ -471,7 +489,8 @@ def check_correctness(
         p.kill()
 
     if not result:
-        result.append("timed out")
+        # Child produced no result (likely stuck or killed externally)
+        result.append("timed out (no result from child)")
 
     return {
         "task_id"      : task_id,
