@@ -127,7 +127,7 @@ def check_correctness(
                     # does not perform destructive actions on their host or network.
                     # Once you have read this disclaimer and taken appropriate precautions,
                     # uncomment the following line and proceed at your own risk:
-                     exec_result = subprocess.run(
+                    exec_result = subprocess.run(
                         ["go", "test", f"-timeout={timeout}s", "main_test.go"],
                         timeout=timeout,
                         capture_output=True,
@@ -149,8 +149,34 @@ def check_correctness(
                             err = exec_result.stdout
                     result.append(f"failed: {err}")
 
+            except subprocess.TimeoutExpired as e:
+                # subprocess timeout provides optional stdout/stderr; include if present
+                detail = ""
+                try:
+                    out = e.stdout.decode() if getattr(e, "stdout", None) else ""
+                except Exception:
+                    out = ""
+                try:
+                    err = e.stderr.decode() if getattr(e, "stderr", None) else ""
+                except Exception:
+                    err = ""
+                detail = err or out
+                if detail:
+                    result.append(f"timed out: {detail}")
+                else:
+                    result.append("timed out")
+            except FileNotFoundError as e:
+                # 'go' not found or not executable
+                result.append(f"failed: {e}")
+            except PermissionError as e:
+                # Permission denied due to sandbox/seccomp or file perms
+                result.append(f"failed: {e}")
             except TimeoutException:
+                # Guard from our own time_limit
                 result.append("timed out")
+            except Exception as e:
+                # Surface unexpected errors instead of masking as timeout
+                result.append(f"failed: {type(e).__name__}: {e}")
 
             shutil.rmtree(tmp_dir)
         elif "js" in language_type.lower():
