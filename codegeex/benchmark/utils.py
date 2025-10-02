@@ -101,14 +101,31 @@ def read_translation_dataset(
                 if tokenizer is None:
                     raise ValueError("tokenizer must be provided when use_sft_prompt_template=True")
                 messages = [
-                    {"role": "system", "content": "You are a code translator. Output only target code without any explanation."},
-                    {"role": "user", "content": "Your job is to translate code from {source_lang} to {target_lang}.\nHere is the {source_lang} code:\n{source_code}".format(source_lang=source_lang, target_lang=target_lang, source_code=source_code)},
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a code translator. Output only target code without any explanation. "
+                            "Do not include package or import statements. Continue exactly from the given target declaration, "
+                            "and produce only the function/method body and its closing braces as needed."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            "Your job is to translate code from {source_lang} to {target_lang}.\n"
+                            "Here is the {source_lang} code:\n{source_code}"
+                        ).format(source_lang=source_lang, target_lang=target_lang, source_code=source_code),
+                    },
                 ]
                 # Build assistant-start prefix, then append target declaration so model continues from it
                 chat_prefix = tokenizer.apply_chat_template(
                     messages, tokenize=False, add_generation_prompt=True
                 )
-                prompt = chat_prefix
+                # Ensure body starts on a new line
+                suffix = target_declaration
+                if not suffix.endswith("\n"):
+                    suffix += "\n"
+                prompt = chat_prefix + suffix
             else:
                 prompt = "code translation\n"
                 prompt += f"{source_lang}:\n"
@@ -116,6 +133,9 @@ def read_translation_dataset(
                 prompt += f"{target_lang}:\n"
                 prompt += target_declaration
             dataset_src[k]["prompt"] = prompt
+            # Attach for debugging/inspection
+            dataset_src[k]["target_declaration"] = target_declaration
+            dataset_src[k]["target_lang_name"] = target_lang
     else:
         raise f"Dataset: {dataset_type} not supported."
 
