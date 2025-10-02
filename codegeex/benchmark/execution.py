@@ -176,7 +176,7 @@ def check_correctness(
                     if detail:
                         result.append(f"timed out: {detail}")
                     else:
-                        result.append("timed out")
+                        result.append("timed out no 1")
                 except FileNotFoundError as e:
                     # 'go' not found or not executable
                     result.append(f"failed: {e}")
@@ -185,7 +185,7 @@ def check_correctness(
                     result.append(f"failed: {e}")
                 except TimeoutException:
                     # Guard from our own time_limit
-                    result.append("timed out")
+                    result.append("timed out no 2")
                 except Exception as e:
                     # Surface unexpected errors instead of masking as timeout
                     result.append(f"failed: {type(e).__name__}: {e}")
