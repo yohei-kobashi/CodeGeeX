@@ -165,8 +165,6 @@ def main():
 
     random.seed(args.seed)
 
-    use_server = args.server_url is not None and len(args.server_url.strip()) > 0
-
     tokenizer = None
     if args.model_name_or_path:
         from transformers import AutoTokenizer
@@ -248,8 +246,8 @@ def main():
             prompts = []
             task_ids = []
             for entry in batch:
-                # Use the same prompt as Megatron path (no extra instructions)
-                prompt = entry.get("src", entry.get("prompt", ""))
+                # Use prepared prompt (may be chat-template applied)
+                prompt = entry.get("prompt", "")
                 prompts.append(prompt)
                 task_ids.append(entry["task_id"])
 

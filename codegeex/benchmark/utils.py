@@ -98,14 +98,17 @@ def read_translation_dataset(
             # target_declaration = declaration
             target_declaration = dataset_tgt[k.split("/")[-1]]["declaration"]
             if use_sft_prompt_template:
+                if tokenizer is None:
+                    raise ValueError("tokenizer must be provided when use_sft_prompt_template=True")
                 messages = [
-                    {"role": "system", "content": "You are a code translator."},
+                    {"role": "system", "content": "You are a code translator. Output only target code without any explanation."},
                     {"role": "user", "content": "Your job is to translate code from {source_lang} to {target_lang}.\nHere is the {source_lang} code:\n{source_code}".format(source_lang=source_lang, target_lang=target_lang, source_code=source_code)},
-                    {"role": "assistant", "content": ""}
                 ]
-                prompt = tokenizer.apply_chat_template(
+                # Build assistant-start prefix, then append target declaration so model continues from it
+                chat_prefix = tokenizer.apply_chat_template(
                     messages, tokenize=False, add_generation_prompt=True
                 )
+                prompt = chat_prefix
             else:
                 prompt = "code translation\n"
                 prompt += f"{source_lang}:\n"
