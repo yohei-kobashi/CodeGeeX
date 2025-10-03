@@ -1,0 +1,2 @@
+language,input_file,pass@1,pass@10,pass@100
+go,/workspace/codegeex/benchmark/humaneval-x/cpp/evaluation0826_base/humaneval_cpp_to_go.jsonl,0.536585,,
