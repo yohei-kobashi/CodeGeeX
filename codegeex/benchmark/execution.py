@@ -127,25 +127,47 @@ def check_correctness(
 
                 go_env = os.environ.copy()
                 go_env["GO111MODULE"] = "off"
+                # Isolate Go cache/tmp to avoid global locks or permission issues
+                gocache_dir = os.path.join(tmp_dir, ".gocache")
+                gotmp_dir = os.path.join(tmp_dir, ".gotmp")
+                os.makedirs(gocache_dir, exist_ok=True)
+                os.makedirs(gotmp_dir, exist_ok=True)
+                go_env["GOCACHE"] = gocache_dir
+                go_env["GOTMPDIR"] = gotmp_dir
+
+                # Probes for diagnostics
+                probe_info = []
+                try:
+                    pv = subprocess.run(["go", "version"], timeout=2, capture_output=True, env=go_env)
+                    probe_info.append(
+                        f"go version rc={pv.returncode} out={pv.stdout.decode(errors='ignore').strip()} err={pv.stderr.decode(errors='ignore').strip()}"
+                    )
+                except Exception as e:
+                    probe_info.append(f"go version probe failed: {type(e).__name__}: {e}")
+                try:
+                    pe = subprocess.run(["go", "env", "GOCACHE", "GOPATH", "GOTMPDIR"], timeout=2, capture_output=True, env=go_env)
+                    probe_info.append(
+                        f"go env rc={pe.returncode} out={pe.stdout.decode(errors='ignore').strip()} err={pe.stderr.decode(errors='ignore').strip()}"
+                    )
+                except Exception as e:
+                    probe_info.append(f"go env probe failed: {type(e).__name__}: {e}")
 
                 try:
-                    exec_result = None
-                    with time_limit(timeout):
-                        # WARNING
-                        # This program exists to execute untrusted model-generated code. Although
-                        # it is highly unlikely that model-generated code will do something overtly
-                        # malicious in response to this test suite, model-generated code may act
-                        # destructively due to a lack of model capability or alignment.
-                        # Users are strongly encouraged to sandbox this evaluation suite so that it
-                        # does not perform destructive actions on their host or network.
-                        # Once you have read this disclaimer and taken appropriate precautions,
-                        # uncomment the following line and proceed at your own risk:
-                        exec_result = subprocess.run(
-                            ["go", "test", f"-timeout={timeout}s", "main_test.go"],
-                            timeout=timeout,
-                            capture_output=True,
-                            env=go_env,
-                        )
+                    # WARNING
+                    # This program exists to execute untrusted model-generated code. Although
+                    # it is highly unlikely that model-generated code will do something overtly
+                    # malicious in response to this test suite, model-generated code may act
+                    # destructively due to a lack of model capability or alignment.
+                    # Users are strongly encouraged to sandbox this evaluation suite so that it
+                    # does not perform destructive actions on their host or network.
+                    # Once you have read this disclaimer and taken appropriate precautions,
+                    # uncomment the following line and proceed at your own risk:
+                    exec_result = subprocess.run(
+                        ["go", "test", "-count=1", "-vet=off", f"-timeout={timeout}s", "main_test.go"],
+                        timeout=timeout,
+                        capture_output=True,
+                        env=go_env,
+                    )
 
                     if exec_result.returncode == 0:
                         result.append("passed")
@@ -160,7 +182,10 @@ def check_correctness(
                                 err = exec_result.stdout.decode()
                             except Exception:
                                 err = exec_result.stdout
-                        result.append(f"failed: {err}")
+                        detail = (err if isinstance(err, str) else str(err)).strip()
+                        if probe_info:
+                            detail = (detail + "\n" + " | ".join(probe_info)).strip()
+                        result.append(f"failed: {detail}")
 
                 except subprocess.TimeoutExpired as e:
                     # subprocess timeout provides optional stdout/stderr; include if present
@@ -173,22 +198,27 @@ def check_correctness(
                     except Exception:
                         err = ""
                     detail = (err or out).strip()
+                    if probe_info:
+                        detail = (detail + "\n" + " | ".join(probe_info)).strip()
                     if detail:
-                        result.append(f"timed out: {detail}")
+                        result.append(f"timed out no 1: {detail}")
                     else:
                         result.append("timed out no 1")
                 except FileNotFoundError as e:
                     # 'go' not found or not executable
-                    result.append(f"failed: {e}")
+                    msg = f"{e}\n" + " | ".join(probe_info)
+                    result.append(f"failed: {msg}")
                 except PermissionError as e:
                     # Permission denied due to sandbox/seccomp or file perms
-                    result.append(f"failed: {e}")
+                    msg = f"{e}\n" + " | ".join(probe_info)
+                    result.append(f"failed: {msg}")
                 except TimeoutException:
                     # Guard from our own time_limit
                     result.append("timed out no 2")
                 except Exception as e:
                     # Surface unexpected errors instead of masking as timeout
-                    result.append(f"failed: {type(e).__name__}: {e}")
+                    msg = f"{type(e).__name__}: {e}\n" + " | ".join(probe_info)
+                    result.append(f"failed: {msg}")
             except Exception as setup_err:
                 # Anything failing before invoking 'go' (mkdir/chdir/write/etc.)
                 result.append(f"failed: GoSetupError: {type(setup_err).__name__}: {setup_err}")
