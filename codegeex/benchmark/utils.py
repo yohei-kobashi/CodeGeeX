@@ -104,15 +104,14 @@ def read_translation_dataset(
                     {
                         "role": "system",
                         "content": (
-                            "You are a code translator. Output only target code without any explanation. "
-                            "Do not include package or import statements. Continue exactly from the given target declaration, "
-                            "and produce only the function/method body and its closing braces as needed."
+                            "You are an expert software engineer proficient in a wide range of programming languages."
                         ),
                     },
                     {
                         "role": "user",
                         "content": (
-                            "Your job is to translate code from {source_lang} to {target_lang}.\n"
+                            "Your task is to carefully translate the following {source_lang} code into {target_lang}.\n"
+                            "The translated code MUST preserve exactly the same functionality as the original.\n"
                             "Here is the {source_lang} code:\n{source_code}"
                         ).format(source_lang=source_lang, target_lang=target_lang, source_code=source_code),
                     },
