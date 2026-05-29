@@ -168,7 +168,21 @@ def main():
     tokenizer = None
     if args.model_name_or_path:
         from transformers import AutoTokenizer
-        tokenizer = AutoTokenizer.from_pretrained(args.model_name_or_path, trust_remote_code=True)
+        try:
+            tokenizer = AutoTokenizer.from_pretrained(
+                args.model_name_or_path,
+                trust_remote_code=True,
+            )
+        except AttributeError as e:
+            if "'list' object has no attribute 'keys'" in str(e):
+                raise RuntimeError(
+                    "Failed to load tokenizer because the model tokenizer config "
+                    "appears to define extra_special_tokens as a list, while this "
+                    "Transformers version expects a dict. Fix the model's "
+                    "tokenizer_config.json or use a compatible Transformers "
+                    f"version. model={args.model_name_or_path}"
+                ) from e
+            raise
 
     use_server = args.server_url is not None and len(args.server_url.strip()) > 0
 
