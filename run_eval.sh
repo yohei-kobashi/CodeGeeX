@@ -7,8 +7,9 @@
 module load singularity
 cd CodeGeeX
 source env/bin/activate
-# bash scripts/evaluate_humanevalx_all.sh grpo_0116 codegeex/benchmark/humaneval-x/humanevalx.sif 64 30 evaluation_grpo_0116.csv
-bash scripts/evaluate_humanevalx_all.sh drgrpo_0116 codegeex/benchmark/humaneval-x/humanevalx.sif 64 30 evaluation_drgrpo_0116.csv
-bash scripts/evaluate_humanevalx_all.sh dapo_0116 codegeex/benchmark/humaneval-x/humanevalx.sif 64 30 evaluation_dapo_0116.csv
-bash scripts/evaluate_humanevalx_all.sh grpo_0123_code codegeex/benchmark/humaneval-x/humanevalx.sif 64 30 evaluation_grpo_0123_code.csv
-bash scripts/evaluate_humanevalx_all.sh grpo_0123_md codegeex/benchmark/humaneval-x/humanevalx.sif 64 30 evaluation_grpo_0123_md.csv
+bash scripts/evaluate_humanevalx_all.sh evaluation_qwen2.5_grpo_reward7b codegeex/benchmark/humaneval-x/humanevalx.sif 64 30 evaluation_qwen2.5_grpo_reward7b.csv
+bash scripts/evaluate_humanevalx_all.sh evaluation_qwen2.5_grpo_reward30b codegeex/benchmark/humaneval-x/humanevalx.sif 64 30 evaluation_qwen2.5_grpo_reward30b.csv
+bash scripts/evaluate_humanevalx_all.sh evaluation_qwen2.5_grpo_reward80b codegeex/benchmark/humaneval-x/humanevalx.sif 64 30 evaluation_qwen2.5_grpo_reward80b.csv
+bash scripts/evaluate_humanevalx_all.sh evaluation_qwen3.5_grpo_reword7b codegeex/benchmark/humaneval-x/humanevalx.sif 64 30 evaluation_qwen3.5_grpo_reward7b.csv
+bash scripts/evaluate_humanevalx_all.sh evaluation_qwen3.5_grpo_reword30b codegeex/benchmark/humaneval-x/humanevalx.sif 64 30 evaluation_qwen3.5_grpo_reward30b.csv
+bash scripts/evaluate_humanevalx_all.sh evaluation_qwen3.5_grpo_reward80b codegeex/benchmark/humaneval-x/humanevalx.sif 64 30 evaluation_qwen3.5_grpo_reward80b.csv
