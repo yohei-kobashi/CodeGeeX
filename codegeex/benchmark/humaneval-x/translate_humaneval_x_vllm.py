@@ -7,6 +7,7 @@ import random
 import argparse
 import logging
 import json
+import subprocess
 import urllib.error
 import urllib.request
 
@@ -105,6 +106,71 @@ def _patch_hf_autoconfig_register_allow_duplicates():
         logger.warning(f"AutoConfig.register patch failed or not needed: {e}")
 
 
+def _normalize_cuda_visible_devices_for_vllm():
+    """Convert GPU UUID entries in CUDA_VISIBLE_DEVICES to numeric GPU indices.
+
+    Some schedulers expose GPUs as UUIDs (for example
+    CUDA_VISIBLE_DEVICES=GPU-...). CUDA itself accepts this, but some vLLM
+    versions try to parse CUDA_VISIBLE_DEVICES entries as integers while
+    importing CUDA quantization utilities. Normalize before importing vLLM.
+    """
+    visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if not visible_devices or "GPU-" not in visible_devices:
+        return
+
+    requested = [device.strip() for device in visible_devices.split(",")]
+    if not any(device.startswith("GPU-") for device in requested):
+        return
+
+    try:
+        result = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=index,uuid",
+                "--format=csv,noheader,nounits",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except Exception as e:
+        logger.warning(
+            "CUDA_VISIBLE_DEVICES contains GPU UUIDs, but failed to query "
+            f"nvidia-smi for numeric indices: {e}"
+        )
+        return
+
+    uuid_to_index = {}
+    for line in result.stdout.splitlines():
+        parts = [part.strip() for part in line.split(",", 1)]
+        if len(parts) == 2:
+            index, uuid = parts
+            uuid_to_index[uuid] = index
+
+    normalized = []
+    for device in requested:
+        if device.startswith("GPU-"):
+            index = uuid_to_index.get(device)
+            if index is None:
+                logger.warning(
+                    "Could not map CUDA_VISIBLE_DEVICES UUID %s to a numeric "
+                    "GPU index; leaving CUDA_VISIBLE_DEVICES unchanged.",
+                    device,
+                )
+                return
+            normalized.append(index)
+        else:
+            normalized.append(device)
+
+    normalized_visible_devices = ",".join(normalized)
+    os.environ["CUDA_VISIBLE_DEVICES"] = normalized_visible_devices
+    logger.info(
+        "Normalized CUDA_VISIBLE_DEVICES for vLLM: %s -> %s",
+        visible_devices,
+        normalized_visible_devices,
+    )
+
+
 def _call_vllm_server(base_url,
                       model,
                       prompt,
@@ -165,6 +231,10 @@ def main():
 
     random.seed(args.seed)
 
+    use_server = args.server_url is not None and len(args.server_url.strip()) > 0
+    if not use_server:
+        _normalize_cuda_visible_devices_for_vllm()
+
     tokenizer = None
     if args.model_name_or_path:
         from transformers import AutoTokenizer
@@ -183,8 +253,6 @@ def main():
                     f"version. model={args.model_name_or_path}"
                 ) from e
             raise
-
-    use_server = args.server_url is not None and len(args.server_url.strip()) > 0
 
     entries = read_translation_dataset(
         args.src_path,
