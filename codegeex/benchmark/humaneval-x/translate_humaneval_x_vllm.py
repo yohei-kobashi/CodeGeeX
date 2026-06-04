@@ -184,7 +184,7 @@ def _call_vllm_server(base_url,
                       timeout):
     """Call vLLM's OpenAI-compatible /completions endpoint for a single prompt.
 
-    Returns generated text or empty string on failure.
+    Returns generation metadata. Text is empty on failure.
     """
     url = base_url.rstrip("/") + "/completions"
     payload = {
@@ -210,7 +210,13 @@ def _call_vllm_server(base_url,
             choices = obj.get("choices", [])
             if choices:
                 # Some servers may include leading/trailing spaces/newlines; keep as-is
-                return choices[0].get("text", "") or ""
+                choice = choices[0]
+                usage = obj.get("usage", {}) or {}
+                return {
+                    "text": choice.get("text", "") or "",
+                    "finish_reason": choice.get("finish_reason"),
+                    "completion_tokens": usage.get("completion_tokens"),
+                }
     except urllib.error.HTTPError as e:
         try:
             err_body = e.read().decode("utf-8")
@@ -221,7 +227,30 @@ def _call_vllm_server(base_url,
         logging.error(f"URLError contacting server: {e}")
     except Exception as e:
         logging.exception(f"Unexpected error contacting server: {e}")
-    return ""
+    return {
+        "text": "",
+        "finish_reason": None,
+        "completion_tokens": None,
+    }
+
+
+def _output_token_count(sequence, text, tokenizer=None):
+    token_ids = getattr(sequence, "token_ids", None) if sequence is not None else None
+    if token_ids is not None:
+        return len(token_ids)
+    if tokenizer is not None:
+        try:
+            return len(tokenizer.encode(text, add_special_tokens=False))
+        except Exception:
+            return None
+    return None
+
+
+def _reached_max_tokens(finish_reason, output_tokens, max_tokens):
+    normalized_finish_reason = (finish_reason or "").lower()
+    if normalized_finish_reason == "length":
+        return True
+    return output_tokens is not None and output_tokens >= max_tokens
 
 
 def main():
@@ -314,6 +343,8 @@ def main():
 
     start_time = time.perf_counter()
     n_done = 0
+    max_token_generations = 0
+    total_generations = 0
 
     output_dir = os.path.dirname(args.output_file)
     if output_dir:
@@ -361,10 +392,22 @@ def main():
                             token_ids = prompt_token_ids + generated_token_ids
                         except Exception:
                             token_ids = []
+                        output_tokens = _output_token_count(seq, text, tokenizer=tokenizer)
                     else:
                         cumulative_logprob = 0.0
+                        finish_reason = None
                         finish = 1
                         token_ids = []
+                        output_tokens = None
+
+                    reached_max_tokens = _reached_max_tokens(
+                        finish_reason,
+                        output_tokens,
+                        args.max_tokens,
+                    )
+                    total_generations += 1
+                    if reached_max_tokens:
+                        max_token_generations += 1
 
                     record = {
                         "task_id": task_ids[j],
@@ -373,12 +416,15 @@ def main():
                         "scores": cumulative_logprob,
                         "finish": finish,
                         "output": token_ids,
+                        "finish_reason": finish_reason,
+                        "output_tokens": output_tokens,
+                        "reached_max_tokens": reached_max_tokens,
                     }
                     outfile.write(json.dumps(record, ensure_ascii=False) + "\n")
             else:
                 # Server mode: call HTTP API for each prompt in the batch
                 for j, prompt in enumerate(prompts):
-                    text = _call_vllm_server(
+                    generation_info = _call_vllm_server(
                         args.server_url,
                         args.model_name_or_path,
                         prompt,
@@ -390,6 +436,18 @@ def main():
                         api_key=args.api_key,
                         timeout=args.request_timeout,
                     )
+                    text = generation_info["text"]
+                    finish_reason = generation_info.get("finish_reason")
+                    output_tokens = generation_info.get("completion_tokens")
+                    reached_max_tokens = _reached_max_tokens(
+                        finish_reason,
+                        output_tokens,
+                        args.max_tokens,
+                    )
+                    total_generations += 1
+                    if reached_max_tokens:
+                        max_token_generations += 1
+
                     lang = (args.language_tgt_type or args.language_src_type or "")
                     truncated = _truncate_to_finished(text, lang, args.dataset)
                     cleaned = cleanup_code(truncated, language_type=lang or "", dataset=args.dataset)
@@ -400,14 +458,32 @@ def main():
                         "prompt": prompts[j],
                         "generation": cleaned,
                         "scores": 0.0,
-                        "finish": 1,
+                        "finish": 2 if finish_reason in ("stop", "eos") else 1,
                         "output": [],
+                        "finish_reason": finish_reason,
+                        "output_tokens": output_tokens,
+                        "reached_max_tokens": reached_max_tokens,
                     }
                     outfile.write(json.dumps(record, ensure_ascii=False) + "\n")
 
             n_done += len(batch)
             elapsed = time.perf_counter() - start_time
             logger.info(f"Processed {n_done}/{total} tasks (elapsed: {elapsed:.1f}s)")
+
+    max_token_rate = max_token_generations / total_generations if total_generations else 0.0
+    logger.info(
+        "max_tokens reached: %d/%d (%.4f)",
+        max_token_generations,
+        total_generations,
+        max_token_rate,
+    )
+    print(
+        "max_tokens reached:",
+        max_token_generations,
+        "/",
+        total_generations,
+        f"({max_token_rate:.4f})",
+    )
 
 if __name__ == "__main__":
     main()
