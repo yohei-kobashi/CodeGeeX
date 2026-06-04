@@ -30,9 +30,13 @@ def add_args(parser):
     group.add_argument("--language-tgt-type", type=str, default=None)
     group.add_argument("--samples-per-problem", type=int, default=20)
     group.add_argument("--batch-size", type=int, default=1)
+    group.add_argument("--do-sample", type=lambda x: str(x).lower() in ("1", "true", "yes", "y"), default=True)
     group.add_argument("--temperature", type=float, default=0.8)
     group.add_argument("--top-p", type=float, default=0.95)
     group.add_argument("--top-k", type=int, default=0)
+    group.add_argument("--min-p", type=float, default=0.0)
+    group.add_argument("--presence-penalty", type=float, default=0.0)
+    group.add_argument("--repetition-penalty", type=float, default=1.0)
     group.add_argument("--max-tokens", type=int, default=1024)
     group.add_argument("--output-file", type=str, default="translations.jsonl")
     group.add_argument("--seed", type=int, default=42)
@@ -178,6 +182,9 @@ def _call_vllm_server(base_url,
                       temperature,
                       top_p,
                       top_k,
+                      min_p,
+                      presence_penalty,
+                      repetition_penalty,
                       max_tokens,
                       stop,
                       api_key,
@@ -193,6 +200,9 @@ def _call_vllm_server(base_url,
         "temperature": temperature,
         "top_p": top_p,
         "top_k": top_k,
+        "min_p": min_p,
+        "presence_penalty": presence_penalty,
+        "repetition_penalty": repetition_penalty,
         "max_tokens": max_tokens,
         "stop": stop,
     }
@@ -324,19 +334,26 @@ def main():
         )
 
         # 共通の SamplingParams
+        sampling_temperature = args.temperature if args.do_sample else 0.0
         base_params = SamplingParams(
-            temperature=args.temperature,
+            temperature=sampling_temperature,
             top_p=args.top_p,
             top_k=args.top_k,
+            min_p=args.min_p,
+            presence_penalty=args.presence_penalty,
+            repetition_penalty=args.repetition_penalty,
             max_tokens=args.max_tokens,
             stop=["<|endoftext|>", "</s>", "<|EOT|>", "<|im_end|>"] + lang_stops,
         )
     else:
         # In server mode, keep stop list as a simple Python list for HTTP payloads
         base_params = {
-            "temperature": args.temperature,
+            "temperature": args.temperature if args.do_sample else 0.0,
             "top_p": args.top_p,
             "top_k": args.top_k,
+            "min_p": args.min_p,
+            "presence_penalty": args.presence_penalty,
+            "repetition_penalty": args.repetition_penalty,
             "max_tokens": args.max_tokens,
             "stop": ["<|endoftext|>", "</s>", "<|EOT|>", "<|im_end|>"] + lang_stops,
         }
@@ -431,6 +448,9 @@ def main():
                         temperature=base_params["temperature"],
                         top_p=base_params["top_p"],
                         top_k=base_params["top_k"],
+                        min_p=base_params["min_p"],
+                        presence_penalty=base_params["presence_penalty"],
+                        repetition_penalty=base_params["repetition_penalty"],
                         max_tokens=base_params["max_tokens"],
                         stop=base_params["stop"],
                         api_key=args.api_key,
