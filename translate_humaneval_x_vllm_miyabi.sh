@@ -60,6 +60,7 @@ for model_index in "${!MODEL_NAMES[@]}"; do
         --tgt-path "$tgt_path" \
         --language-src-type "$src_lang" \
         --language-tgt-type "$tgt_lang" \
+        --max-tokens "$MAX_TOKENS" \
         --batch-size "$BATCH_SIZE" \
         --output-file "$output_file" \
         --samples-per-problem "$SAMPLES_PER_PROBLEM"
