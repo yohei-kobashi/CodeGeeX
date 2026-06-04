@@ -14,11 +14,12 @@ PYTHON_MODULE="codegeex.benchmark.humaneval-x.translate_humaneval_x_vllm"
 BENCHMARK_DIR="codegeex/benchmark/humaneval-x"
 BATCH_SIZE=64
 MAX_TOKENS=4096
-SAMPLES_PER_PROBLEM=3
+SAMPLES_PER_PROBLEM=5
 
 LANGUAGES=(cpp go java js python rust)
 
 MODEL_NAMES=(
+  "Qwen/Qwen2.5-Coder-7B-Instruct"
   "Qwen/Qwen3.5-4B"
   "/work/go25/share/model/code_trans_grpo_model_0409/Qwen2.5_Coder_7B_grpo_reward7b/global_step_194"
   "/work/go25/share/model/code_trans_grpo_model_0409/Qwen2.5_Coder_7B_grpo_reward30b/global_step_194"
@@ -29,6 +30,7 @@ MODEL_NAMES=(
 )
 
 OUTPUT_DIRS=(
+  "evaluation_qwen2.5"
   "evaluation_qwen3.5"
   "evaluation_qwen2.5_grpo_reward7b"
   "evaluation_qwen2.5_grpo_reward30b"
@@ -38,11 +40,28 @@ OUTPUT_DIRS=(
   "evaluation_qwen3.5_grpo_reward80b"
 )
 
+sampling_args_for_model() {
+  local model_name="$1"
+
+  case "$model_name" in
+    *Qwen3.5*|*qwen3.5*)
+      echo "--do-sample true --temperature 0.6 --top-p 0.95 --top-k 20 --min-p 0.0 --presence-penalty 0.0 --repetition-penalty 1.0"
+      ;;
+    *Qwen2.5-Coder-7B-Instruct*|*Qwen2.5_Coder_7B*|*qwen2.5_coder_7b*)
+      echo "--do-sample true --temperature 0.7 --top-p 0.8 --top-k 20 --repetition-penalty 1.1"
+      ;;
+    *)
+      echo "--do-sample true"
+      ;;
+  esac
+}
+
 for model_index in "${!MODEL_NAMES[@]}"; do
   model_name="${MODEL_NAMES[$model_index]}"
   output_dir="${OUTPUT_DIRS[$model_index]}"
+  read -r -a sampling_args <<< "$(sampling_args_for_model "$model_name")"
 
-  echo "Running translations with ${model_name}; output directory: ${output_dir}"
+  echo "Running translations with ${model_name}; output directory: ${output_dir}; sampling args: ${sampling_args[*]}"
 
   for src_lang in "${LANGUAGES[@]}"; do
     for tgt_lang in "${LANGUAGES[@]}"; do
@@ -63,7 +82,8 @@ for model_index in "${!MODEL_NAMES[@]}"; do
         --max-tokens "$MAX_TOKENS" \
         --batch-size "$BATCH_SIZE" \
         --output-file "$output_file" \
-        --samples-per-problem "$SAMPLES_PER_PROBLEM"
+        --samples-per-problem "$SAMPLES_PER_PROBLEM" \
+        "${sampling_args[@]}"
     done
   done
 done
