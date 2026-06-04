@@ -7,12 +7,12 @@ module purge
 export CUDA_VISIBLE_DEVICES=0
 module load nvidia/25.9
 module load singularity/4.2.1
-singularity shell --nv --bind /work/go25:/work/go25 /work/gj26/share/sif/vllm_v0.21.0.sif
+singularity exec --nv --bind /work/go25:/work/go25 /work/gj26/share/sif/vllm_v0.21.0.sif bash <<'EOF'
 cd CodeGeeX
 
 PYTHON_MODULE="codegeex.benchmark.humaneval-x.translate_humaneval_x_vllm"
 BENCHMARK_DIR="codegeex/benchmark/humaneval-x"
-BATCH_SIZE=64
+BATCH_SIZE=128
 MAX_TOKENS=4096
 SAMPLES_PER_PROBLEM=5
 
@@ -87,3 +87,5 @@ for model_index in "${!MODEL_NAMES[@]}"; do
     done
   done
 done
+
+EOF
