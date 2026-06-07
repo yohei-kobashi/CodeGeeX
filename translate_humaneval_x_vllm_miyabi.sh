@@ -167,6 +167,7 @@ for model_index in "${!MODEL_NAMES[@]}"; do
       echo "[$(date)] Running ${model_name}: ${src_lang} -> ${tgt_lang}; output=${output_file}"
       python3 -u -m "$PYTHON_MODULE" \
         --model-name-or-path "$SERVER_MODEL_NAME" \
+        --tokenizer-name-or-path "$model_name" \
         --src-path "$src_path" \
         --tgt-path "$tgt_path" \
         --language-src-type "$src_lang" \
