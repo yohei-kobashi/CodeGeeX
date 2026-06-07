@@ -57,8 +57,19 @@ def add_args(parser):
     group.add_argument(
         "--request-timeout",
         type=float,
-        default=120.0,
+        default=600.0,
         help="HTTP request timeout in seconds for server mode.",
+    )
+    group.add_argument(
+        "--server-request-retries",
+        type=int,
+        default=3,
+        help="Number of HTTP retries for each server-mode batch.",
+    )
+    group.add_argument(
+        "--skip-existing",
+        action="store_true",
+        help="Skip generation when output-file already has the expected number of JSONL rows.",
     )
     return parser
 
@@ -244,6 +255,105 @@ def _call_vllm_server(base_url,
     }
 
 
+def _call_vllm_server_batch(base_url,
+                            model,
+                            prompts,
+                            *,
+                            temperature,
+                            top_p,
+                            top_k,
+                            min_p,
+                            presence_penalty,
+                            repetition_penalty,
+                            max_tokens,
+                            stop,
+                            api_key,
+                            timeout,
+                            retries):
+    """Call vLLM's OpenAI-compatible /completions endpoint for a prompt batch."""
+    if not prompts:
+        return []
+
+    url = base_url.rstrip("/") + "/completions"
+    payload = {
+        "model": model,
+        "prompt": prompts,
+        "temperature": temperature,
+        "top_p": top_p,
+        "top_k": top_k,
+        "min_p": min_p,
+        "presence_penalty": presence_penalty,
+        "repetition_penalty": repetition_penalty,
+        "max_tokens": max_tokens,
+        "stop": stop,
+    }
+    data = json.dumps(payload).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    empty_result = {
+        "text": "",
+        "finish_reason": None,
+        "completion_tokens": None,
+    }
+    last_error = None
+    retries = max(1, retries)
+    for attempt in range(1, retries + 1):
+        req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                body = resp.read().decode("utf-8")
+                obj = json.loads(body)
+                break
+        except urllib.error.HTTPError as e:
+            try:
+                err_body = e.read().decode("utf-8")
+            except Exception:
+                err_body = str(e)
+            last_error = f"HTTPError from server: {e.code} {e.reason} body={err_body}"
+        except urllib.error.URLError as e:
+            last_error = f"URLError contacting server: {e}"
+        except Exception as e:
+            last_error = f"Unexpected error contacting server: {e}"
+
+        logger.warning(
+            "Server batch request failed on attempt %d/%d: %s",
+            attempt,
+            retries,
+            last_error,
+        )
+        if attempt < retries:
+            time.sleep(min(30, 2 ** attempt))
+    else:
+        raise RuntimeError(f"Server batch request failed after {retries} attempts: {last_error}")
+
+    choices = obj.get("choices", []) or []
+    usage = obj.get("usage", {}) or {}
+    completion_tokens = usage.get("completion_tokens")
+    results = [dict(empty_result) for _ in prompts]
+
+    for fallback_index, choice in enumerate(choices):
+        index = choice.get("index", fallback_index)
+        if not isinstance(index, int) or index < 0 or index >= len(results):
+            logger.warning("Ignoring completion with invalid index: %s", index)
+            continue
+        results[index] = {
+            "text": choice.get("text", "") or "",
+            "finish_reason": choice.get("finish_reason"),
+            "completion_tokens": completion_tokens,
+        }
+
+    if len(choices) != len(prompts):
+        logger.warning(
+            "Server returned %d choices for %d prompts.",
+            len(choices),
+            len(prompts),
+        )
+
+    return results
+
+
 def _output_token_count(sequence, text, tokenizer=None):
     token_ids = getattr(sequence, "token_ids", None) if sequence is not None else None
     if token_ids is not None:
@@ -261,6 +371,14 @@ def _reached_max_tokens(finish_reason, output_tokens, max_tokens):
     if normalized_finish_reason == "length":
         return True
     return output_tokens is not None and output_tokens >= max_tokens
+
+
+def _jsonl_line_count(path):
+    try:
+        with open(path, "r", encoding="utf-8") as infile:
+            return sum(1 for _ in infile)
+    except FileNotFoundError:
+        return 0
 
 
 def main():
@@ -366,8 +484,21 @@ def main():
     output_dir = os.path.dirname(args.output_file)
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
-        
-    with open(args.output_file, "w", encoding="utf-8") as outfile:
+
+    if args.skip_existing:
+        existing_lines = _jsonl_line_count(args.output_file)
+        if existing_lines >= total:
+            logger.info(
+                "Skipping existing output with %d/%d rows: %s",
+                existing_lines,
+                total,
+                args.output_file,
+            )
+            return
+
+    tmp_output_file = args.output_file + ".tmp"
+
+    with open(tmp_output_file, "w", encoding="utf-8") as outfile:
         # バッチでまとめて生成
         for i in range(0, total, args.batch_size):
             batch = tasks[i : i + args.batch_size]
@@ -439,23 +570,24 @@ def main():
                     }
                     outfile.write(json.dumps(record, ensure_ascii=False) + "\n")
             else:
-                # Server mode: call HTTP API for each prompt in the batch
-                for j, prompt in enumerate(prompts):
-                    generation_info = _call_vllm_server(
-                        args.server_url,
-                        args.model_name_or_path,
-                        prompt,
-                        temperature=base_params["temperature"],
-                        top_p=base_params["top_p"],
-                        top_k=base_params["top_k"],
-                        min_p=base_params["min_p"],
-                        presence_penalty=base_params["presence_penalty"],
-                        repetition_penalty=base_params["repetition_penalty"],
-                        max_tokens=base_params["max_tokens"],
-                        stop=base_params["stop"],
-                        api_key=args.api_key,
-                        timeout=args.request_timeout,
-                    )
+                # Server mode: call HTTP API once per prompt batch.
+                generation_infos = _call_vllm_server_batch(
+                    args.server_url,
+                    args.model_name_or_path,
+                    prompts,
+                    temperature=base_params["temperature"],
+                    top_p=base_params["top_p"],
+                    top_k=base_params["top_k"],
+                    min_p=base_params["min_p"],
+                    presence_penalty=base_params["presence_penalty"],
+                    repetition_penalty=base_params["repetition_penalty"],
+                    max_tokens=base_params["max_tokens"],
+                    stop=base_params["stop"],
+                    api_key=args.api_key,
+                    timeout=args.request_timeout,
+                    retries=args.server_request_retries,
+                )
+                for j, generation_info in enumerate(generation_infos):
                     text = generation_info["text"]
                     finish_reason = generation_info.get("finish_reason")
                     output_tokens = generation_info.get("completion_tokens")
@@ -469,6 +601,14 @@ def main():
                         max_token_generations += 1
 
                     lang = (args.language_tgt_type or args.language_src_type or "")
+                    if not text:
+                        logger.warning(
+                            "Empty generation: task_id=%s src=%s tgt=%s output_file=%s",
+                            task_ids[j],
+                            args.language_src_type,
+                            args.language_tgt_type,
+                            args.output_file,
+                        )
                     truncated = _truncate_to_finished(text, lang, args.dataset)
                     cleaned = cleanup_code(truncated, language_type=lang or "", dataset=args.dataset)
 
@@ -487,8 +627,11 @@ def main():
                     outfile.write(json.dumps(record, ensure_ascii=False) + "\n")
 
             n_done += len(batch)
+            outfile.flush()
             elapsed = time.perf_counter() - start_time
             logger.info(f"Processed {n_done}/{total} tasks (elapsed: {elapsed:.1f}s)")
+
+    os.replace(tmp_output_file, args.output_file)
 
     max_token_rate = max_token_generations / total_generations if total_generations else 0.0
     logger.info(
