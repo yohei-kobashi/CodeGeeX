@@ -27,11 +27,12 @@ set -euo pipefail
 PYTHON_MODULE="codegeex.benchmark.humaneval-x.translate_humaneval_x_vllm"
 BENCHMARK_DIR="codegeex/benchmark/humaneval-x"
 BATCH_SIZE=205
+MAX_MODEL_LEN=8192
 MAX_TOKENS=4096
 SAMPLES_PER_PROBLEM=5
 REQUEST_TIMEOUT=900
 SERVER_REQUEST_RETRIES=3
-SKIP_EXISTING=0
+SKIP_EXISTING=1
 SERVER_HOST="0.0.0.0"
 CLIENT_HOST="127.0.0.1"
 BASE_PORT=18000
@@ -53,32 +54,32 @@ LANGUAGES=(cpp go java js python rust)
 
 MODEL_NAMES=(
   "Qwen/Qwen2.5-Coder-7B-Instruct"
-  # "Qwen/Qwen3.5-4B"
-  # "/work/go25/share/model/code_trans_grpo_model_0409/Qwen2.5_Coder_7B_grpo_reward7b/global_step_194"
-  # "/work/go25/share/model/code_trans_grpo_model_0409/Qwen2.5_Coder_7B_grpo_reward30b/global_step_194"
-  # "/work/go25/share/model/code_trans_grpo_model_0409/Qwen2.5_Coder_7B_grpo_reward80b/global_step_194"
-  # "/work/go25/share/model/code_trans_grpo_model_0409/Qwen3.5_4B_grpo_reward7b/global_step_194"
-  # "/work/go25/share/model/code_trans_grpo_model_0409/Qwen3.5_4B_grpo_reward30b/global_step_194"
-  # "/work/go25/share/model/code_trans_grpo_model_0409/Qwen3.5_4B_grpo_reward80b/global_step_194"
-  # "/work/go25/share/model/code_trans_grpo_model_0409/Qwen2.5_Coder_7B_grpo_reward30b_v2/global_step_100"
-  # "/work/go25/share/model/code_trans_grpo_model_0409/Qwen2.5_Coder_7B_grpo_reward30b_v2/global_step_194"
-  # "/work/go25/share/model/code_trans_grpo_model_0409/Qwen3.5_4B_grpo_reward30b_v2/global_step_100"
-  # "/work/go25/share/model/code_trans_grpo_model_0409/Qwen3.5_4B_grpo_reward30b_v2/global_step_194"
+  "Qwen/Qwen3.5-4B"
+  "/work/go25/share/model/code_trans_grpo_model_0409/Qwen2.5_Coder_7B_grpo_reward7b/global_step_194"
+  "/work/go25/share/model/code_trans_grpo_model_0409/Qwen2.5_Coder_7B_grpo_reward30b/global_step_194"
+  "/work/go25/share/model/code_trans_grpo_model_0409/Qwen2.5_Coder_7B_grpo_reward80b/global_step_194"
+  "/work/go25/share/model/code_trans_grpo_model_0409/Qwen3.5_4B_grpo_reward7b/global_step_194"
+  "/work/go25/share/model/code_trans_grpo_model_0409/Qwen3.5_4B_grpo_reward30b/global_step_194"
+  "/work/go25/share/model/code_trans_grpo_model_0409/Qwen3.5_4B_grpo_reward80b/global_step_194"
+  "/work/go25/share/model/code_trans_grpo_model_0409/Qwen2.5_Coder_7B_grpo_reward30b_v2/global_step_100"
+  "/work/go25/share/model/code_trans_grpo_model_0409/Qwen2.5_Coder_7B_grpo_reward30b_v2/global_step_194"
+  "/work/go25/share/model/code_trans_grpo_model_0409/Qwen3.5_4B_grpo_reward30b_v2/global_step_100"
+  "/work/go25/share/model/code_trans_grpo_model_0409/Qwen3.5_4B_grpo_reward30b_v2/global_step_194"
 )
 
 OUTPUT_DIRS=(
   "evaluation_qwen2.5"
-  # "evaluation_qwen3.5"
-  # "evaluation_qwen2.5_grpo_reward7b"
-  # "evaluation_qwen2.5_grpo_reward30b"
-  # "evaluation_qwen2.5_grpo_reward80b"
-  # "evaluation_qwen3.5_grpo_reward7b"
-  # "evaluation_qwen3.5_grpo_reward30b"
-  # "evaluation_qwen3.5_grpo_reward80b"
-  # "evaluation_qwen2.5_grpo_reward30b_v2_100"
-  # "evaluation_qwen2.5_grpo_reward30b_v2_194"
-  # "evaluation_qwen3.5_grpo_reward80b_v2_100"
-  # "evaluation_qwen3.5_grpo_reward80b_v2_194"
+  "evaluation_qwen3.5"
+  "evaluation_qwen2.5_grpo_reward7b"
+  "evaluation_qwen2.5_grpo_reward30b"
+  "evaluation_qwen2.5_grpo_reward80b"
+  "evaluation_qwen3.5_grpo_reward7b"
+  "evaluation_qwen3.5_grpo_reward30b"
+  "evaluation_qwen3.5_grpo_reward80b"
+  "evaluation_qwen2.5_grpo_reward30b_v2_100"
+  "evaluation_qwen2.5_grpo_reward30b_v2_194"
+  "evaluation_qwen3.5_grpo_reward80b_v2_100"
+  "evaluation_qwen3.5_grpo_reward80b_v2_194"
 )
 
 if [[ "${#MODEL_NAMES[@]}" -ne "${#OUTPUT_DIRS[@]}" ]]; then
@@ -170,6 +171,7 @@ for model_index in "${!MODEL_NAMES[@]}"; do
     --dtype bfloat16 \
     --gpu-memory-utilization 0.90 \
     --kv-cache-dtype fp8 \
+    --max-model-len "$MAX_MODEL_LEN" \
     --max-num-batched-tokens 131072 \
     --max-num-seqs "$BATCH_SIZE" \
     --enforce-eager \
