@@ -23,6 +23,12 @@ def add_args(parser):
     group = parser.add_argument_group("translation")
 
     group.add_argument("--model-name-or-path", type=str, required=True)
+    group.add_argument(
+        "--tokenizer-name-or-path",
+        type=str,
+        default=None,
+        help="Optional tokenizer path/name. Useful when --model-name-or-path is a vLLM served-model alias.",
+    )
     group.add_argument("--src-path", type=str, required=True)
     group.add_argument("--tgt-path", type=str, required=True)
     group.add_argument("--dataset", type=str, default="humaneval")
@@ -393,11 +399,12 @@ def main():
         _normalize_cuda_visible_devices_for_vllm()
 
     tokenizer = None
-    if args.model_name_or_path:
+    tokenizer_name_or_path = args.tokenizer_name_or_path or args.model_name_or_path
+    if tokenizer_name_or_path:
         from transformers import AutoTokenizer
         try:
             tokenizer = AutoTokenizer.from_pretrained(
-                args.model_name_or_path,
+                tokenizer_name_or_path,
                 trust_remote_code=True,
             )
         except AttributeError as e:
@@ -407,7 +414,7 @@ def main():
                     "appears to define extra_special_tokens as a list, while this "
                     "Transformers version expects a dict. Fix the model's "
                     "tokenizer_config.json or use a compatible Transformers "
-                    f"version. model={args.model_name_or_path}"
+                    f"version. tokenizer={tokenizer_name_or_path}"
                 ) from e
             raise
 
