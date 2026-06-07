@@ -34,7 +34,6 @@ SERVER_REQUEST_RETRIES=3
 SERVER_HOST="0.0.0.0"
 CLIENT_HOST="127.0.0.1"
 BASE_PORT=18000
-SERVER_MODEL_NAME="current-model"
 LOG_DIR="logs/humaneval_x_vllm_miyabi"
 
 mkdir -p "$LOG_DIR"
@@ -130,6 +129,7 @@ trap stop_server EXIT
 for model_index in "${!MODEL_NAMES[@]}"; do
   model_name="${MODEL_NAMES[$model_index]}"
   output_dir="${OUTPUT_DIRS[$model_index]}"
+  served_model_name="$model_name"
   read -r -a sampling_args <<< "$(sampling_args_for_model "$model_name")"
   port=$((BASE_PORT + model_index))
   server_url="http://${CLIENT_HOST}:${port}/v1"
@@ -140,7 +140,7 @@ for model_index in "${!MODEL_NAMES[@]}"; do
   vllm serve "$model_name" \
     --host "$SERVER_HOST" \
     --port "$port" \
-    --served-model-name "$SERVER_MODEL_NAME" \
+    --served-model-name "$served_model_name" \
     --tensor-parallel-size 1 \
     --dtype bfloat16 \
     --gpu-memory-utilization 0.90 \
@@ -166,7 +166,7 @@ for model_index in "${!MODEL_NAMES[@]}"; do
 
       echo "[$(date)] Running ${model_name}: ${src_lang} -> ${tgt_lang}; output=${output_file}"
       python3 -u -m "$PYTHON_MODULE" \
-        --model-name-or-path "$SERVER_MODEL_NAME" \
+        --model-name-or-path "$served_model_name" \
         --tokenizer-name-or-path "$model_name" \
         --src-path "$src_path" \
         --tgt-path "$tgt_path" \
