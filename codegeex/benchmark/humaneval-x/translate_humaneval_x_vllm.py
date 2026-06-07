@@ -336,7 +336,7 @@ def _call_vllm_server_batch(base_url,
 
     choices = obj.get("choices", []) or []
     usage = obj.get("usage", {}) or {}
-    completion_tokens = usage.get("completion_tokens")
+    aggregate_completion_tokens = usage.get("completion_tokens")
     results = [dict(empty_result) for _ in prompts]
 
     for fallback_index, choice in enumerate(choices):
@@ -344,6 +344,10 @@ def _call_vllm_server_batch(base_url,
         if not isinstance(index, int) or index < 0 or index >= len(results):
             logger.warning("Ignoring completion with invalid index: %s", index)
             continue
+        choice_usage = choice.get("usage", {}) or {}
+        completion_tokens = choice_usage.get("completion_tokens")
+        if completion_tokens is None and len(prompts) == 1:
+            completion_tokens = aggregate_completion_tokens
         results[index] = {
             "text": choice.get("text", "") or "",
             "finish_reason": choice.get("finish_reason"),
@@ -370,6 +374,15 @@ def _output_token_count(sequence, text, tokenizer=None):
         except Exception:
             return None
     return None
+
+
+def _token_count_text(text, tokenizer=None):
+    if tokenizer is None:
+        return None
+    try:
+        return len(tokenizer.encode(text, add_special_tokens=False))
+    except Exception:
+        return None
 
 
 def _reached_max_tokens(finish_reason, output_tokens, max_tokens):
@@ -453,7 +466,6 @@ def main():
             dtype="bfloat16",
             gpu_memory_utilization=0.95,
             kv_cache_dtype="fp8",
-            max_num_batched_tokens=16384,
             max_num_seqs=args.batch_size,
             enforce_eager=True,
         )
@@ -598,6 +610,8 @@ def main():
                     text = generation_info["text"]
                     finish_reason = generation_info.get("finish_reason")
                     output_tokens = generation_info.get("completion_tokens")
+                    if output_tokens is None:
+                        output_tokens = _token_count_text(text, tokenizer=tokenizer)
                     reached_max_tokens = _reached_max_tokens(
                         finish_reason,
                         output_tokens,
