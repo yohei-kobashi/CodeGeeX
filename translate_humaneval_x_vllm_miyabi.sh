@@ -31,12 +31,23 @@ MAX_TOKENS=4096
 SAMPLES_PER_PROBLEM=5
 REQUEST_TIMEOUT=900
 SERVER_REQUEST_RETRIES=3
+SKIP_EXISTING=0
 SERVER_HOST="0.0.0.0"
 CLIENT_HOST="127.0.0.1"
 BASE_PORT=18000
 LOG_DIR="logs/humaneval_x_vllm_miyabi"
 
 mkdir -p "$LOG_DIR"
+
+echo "[$(date)] Work directory: $(pwd)"
+echo "[$(date)] Benchmark directory: $(realpath "$BENCHMARK_DIR")"
+echo "[$(date)] SKIP_EXISTING=${SKIP_EXISTING}"
+
+skip_existing_args=(--skip-existing)
+if [[ "$SKIP_EXISTING" == "0" || "$SKIP_EXISTING" == "false" || "$SKIP_EXISTING" == "no" ]]; then
+  skip_existing_args=()
+  echo "[$(date)] Existing output files will be overwritten."
+fi
 
 LANGUAGES=(cpp go java js python rust)
 
@@ -163,8 +174,9 @@ for model_index in "${!MODEL_NAMES[@]}"; do
       src_path="${BENCHMARK_DIR}/${src_lang}/data/humaneval_${src_lang}.jsonl.gz"
       tgt_path="${BENCHMARK_DIR}/${tgt_lang}/data/humaneval_${tgt_lang}.jsonl.gz"
       output_file="${BENCHMARK_DIR}/${src_lang}/${output_dir}/humaneval_${src_lang}_to_${tgt_lang}.jsonl"
+      output_abs_path="$(realpath -m "$output_file")"
 
-      echo "[$(date)] Running ${model_name}: ${src_lang} -> ${tgt_lang}; output=${output_file}"
+      echo "[$(date)] Running ${model_name}: ${src_lang} -> ${tgt_lang}; output=${output_file}; abs=${output_abs_path}"
       python3 -u -m "$PYTHON_MODULE" \
         --model-name-or-path "$served_model_name" \
         --tokenizer-name-or-path "$model_name" \
@@ -179,7 +191,7 @@ for model_index in "${!MODEL_NAMES[@]}"; do
         --server-url "$server_url" \
         --request-timeout "$REQUEST_TIMEOUT" \
         --server-request-retries "$SERVER_REQUEST_RETRIES" \
-        --skip-existing \
+        "${skip_existing_args[@]}" \
         "${sampling_args[@]}"
       echo "[$(date)] Finished ${model_name}: ${src_lang} -> ${tgt_lang}"
     done
