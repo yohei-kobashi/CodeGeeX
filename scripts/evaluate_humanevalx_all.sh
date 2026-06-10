@@ -235,4 +235,46 @@ for lang in "${langs[@]}"; do
   done
 done
 
+python3 - "$CSV_OUT" <<'PY'
+import csv
+import math
+import sys
+
+csv_path = sys.argv[1]
+with open(csv_path, newline="") as fp:
+    rows = list(csv.DictReader(fp))
+
+if rows:
+    fieldnames = list(rows[0].keys())
+    metric_cols = [c for c in fieldnames if c.startswith("pass@") and not c.endswith("_std")]
+
+    total = {field: "" for field in fieldnames}
+    total["language"] = "total"
+    total["input_file"] = "ALL"
+
+    for metric in metric_cols:
+        vals = []
+        for row in rows:
+            value = row.get(metric, "")
+            if value == "":
+                continue
+            vals.append(float(value))
+        if not vals:
+            continue
+        total[metric] = f"{sum(vals) / len(vals):.6f}"
+
+        std_col = f"{metric}_std"
+        if std_col in total:
+            if len(vals) > 1:
+                mean = sum(vals) / len(vals)
+                var = sum((v - mean) ** 2 for v in vals) / (len(vals) - 1)
+                total[std_col] = f"{math.sqrt(var):.6f}"
+            else:
+                total[std_col] = "0.000000"
+
+    with open(csv_path, "a", newline="") as fp:
+        writer = csv.DictWriter(fp, fieldnames=fieldnames)
+        writer.writerow(total)
+PY
+
 echo "CSV written to: $CSV_OUT"
