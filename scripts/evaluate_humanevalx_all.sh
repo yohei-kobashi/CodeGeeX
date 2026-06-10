@@ -5,7 +5,7 @@ set -euo pipefail
 # Evaluate HumanEval-X results for all languages inside a Singularity/Apptainer container.
 #
 # Usage:
-#   scripts/evaluate_humanevalx_all.sh <input_dir> [sif_path] [n_workers] [timeout] [csv_out] [target_langs]
+#   scripts/evaluate_humanevalx_all.sh <input_dir> [sif_path] [n_workers] [timeout] [csv_out] [target_langs] [no_resume]
 #
 # Arguments:
 #   input_dir  : Directory name that exists under each language dir, e.g.
@@ -17,6 +17,8 @@ set -euo pipefail
 #   csv_out    : Path to aggregate CSV output (default: <repo>/humanevalx_results.csv)
 #   target_langs : Optional comma-separated target languages to evaluate only
 #                  (e.g., "python" or "java,cpp"). If omitted, evaluate all.
+#   no_resume  : Optional true/false flag. If true, ignore existing *_results.jsonl
+#                files and re-run evaluation from scratch (default: false).
 #
 # Notes:
 # - This script assumes the repository is checked out and that the SIF is already built.
@@ -24,7 +26,7 @@ set -euo pipefail
 #     /workspace -> repository root (for Python imports and runscript expectations)
 
 usage() {
-  echo "Usage: $0 <input_dir> [sif_path] [n_workers] [timeout] [csv_out] [target_langs]" 1>&2
+  echo "Usage: $0 <input_dir> [sif_path] [n_workers] [timeout] [csv_out] [target_langs] [no_resume]" 1>&2
 }
 
 if [[ ${1:-} == "-h" || ${1:-} == "--help" ]]; then
@@ -48,6 +50,7 @@ REPO_ROOT=$(cd -- "$SCRIPT_DIR/.." && pwd)
 HUMX_DIR="$REPO_ROOT/codegeex/benchmark/humaneval-x"
 CSV_OUT="${5:-$REPO_ROOT/humanevalx_results.csv}"
 TARGET_LANGS_RAW="${6:-}"
+NO_RESUME_RAW="${7:-}"
 
 if [[ ! -d "$HUMX_DIR" ]]; then
   echo "Error: humaneval-x dir not found: $HUMX_DIR" 1>&2
@@ -119,8 +122,16 @@ if [[ -n "$TARGET_LANGS_RAW" ]]; then
   fi
 fi
 
+EVAL_EXTRA_ARGS=()
+case "${NO_RESUME_RAW,,}" in
+  1|true|yes|y|no_resume|--no_resume)
+    EVAL_EXTRA_ARGS+=( --no_resume True )
+    echo "Resume disabled: existing *_results.jsonl files will be ignored"
+    ;;
+esac
+
 # Prepare CSV header (truncate if exists)
-echo "language,input_file,pass@1,pass@10,pass@100" > "$CSV_OUT"
+echo "language,input_file,pass@1,pass@1_std,pass@5,pass@5_std,pass@10,pass@10_std,pass@100,pass@100_std" > "$CSV_OUT"
 
 # Optional: bind host node_modules as global in container if present (for js-md5, etc.)
 HOST_NODE_MODULES_DIR="$REPO_ROOT/node_modules"
@@ -212,13 +223,14 @@ for lang in "${langs[@]}"; do
       --tmp_dir /workspace/codegeex/benchmark/humaneval-x \
       --n_workers "$N_WORKERS" \
       --timeout "$TIMEOUT" \
+      "${EVAL_EXTRA_ARGS[@]}" \
       2> >(tee "$log_file" >&2))
     set +x
     # Append CSV row (fallback to empty metrics if nothing captured)
     if [[ -n "$row" ]]; then
       echo "$row" >> "$CSV_OUT"
     else
-      echo "$problem_lang,$container_input,,," >> "$CSV_OUT"
+      echo "$problem_lang,$container_input,,,,,,,," >> "$CSV_OUT"
     fi
   done
 done

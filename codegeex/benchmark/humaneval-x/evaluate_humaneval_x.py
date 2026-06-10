@@ -3,6 +3,7 @@ import sys
 import fire
 import json
 import gzip
+import csv
 import regex
 import numpy as np
 
@@ -233,16 +234,24 @@ def evaluate_functional_correctness(
         timeout: float = 500.0,
         problem_file: str = "../data/humaneval_python.jsonl.gz",
         out_dir: str = None,
-        k: List[int] = [1, 10, 100],
+        k: List[int] = [1, 5, 10, 100],
         test_groundtruth: bool = False,
         example_test: bool = False,
+        from_results: bool = False,
+        results_file: str = None,
+        csv_out: str = None,
+        no_resume: bool = False,
 ):
+    if from_results or results_file is not None:
+        return summarize_results_jsonl(
+            results_file=results_file or input_file,
+            csv_out=csv_out,
+            problem_file=problem_file,
+            k=k,
+        )
+
     if example_test:
         print("Example test...", file=sys.stderr)
-
-    problems = read_dataset(problem_file,
-                            dataset_type="humaneval")
-    sample_jsonl = stream_jsonl_all(input_file)
 
     if example_test:
         suffix = "_example_test.jsonl"
@@ -254,6 +263,18 @@ def evaluate_functional_correctness(
         out_file = os.path.join(out_dir, input_file.split('/')[-1].replace(".jsonl", suffix))
     else:
         out_file = os.path.join(input_file.replace(".jsonl", suffix))
+
+    lang_key = _lang_from_problem_file(problem_file) or ""
+    if os.path.exists(out_file) and not no_resume:
+        print(f"Using existing results file: {out_file}", file=sys.stderr)
+        pass_at_k = _metric_summary_from_results(out_file, k)[0]
+        print(_format_metric_csv_row(lang_key, input_file or "", pass_at_k, k))
+        print("Evaluation finished.", file=sys.stderr)
+        return
+
+    problems = read_dataset(problem_file,
+                            dataset_type="humaneval")
+    sample_jsonl = stream_jsonl_all(input_file)
 
     # Ground truth mode is now controlled only by the explicit flag 'test_groundtruth'.
     # Do not auto-enable based on input path.
@@ -342,8 +363,11 @@ def evaluate_functional_correctness(
     pass_at_k = {}
     if evaluate_pass_at_k:
         ks = k
-        pass_at_k = {f"pass@{kk}": estimate_pass_at_k(total, correct, kk).mean()
-                     for kk in ks if (total >= kk).all()}
+        for kk in ks:
+            if (total >= kk).all():
+                pass_values = estimate_pass_at_k(total, correct, kk)
+                pass_at_k[f"pass@{kk}"] = pass_values.mean()
+                pass_at_k[f"pass@{kk}_std"] = pass_values.std(ddof=1) if len(pass_values) > 1 else 0.0
     else:
         # Keep totals on stderr for diagnostics without polluting stdout CSV
         print("Total:", np.sum(total), file=sys.stderr)
@@ -364,22 +388,113 @@ def evaluate_functional_correctness(
 
     # Compose CSV row for stdout; shell will add header.
     # language: infer from problem_file; input_file: as provided; metrics: formatted or blank.
-    lang_key = _lang_from_problem_file(problem_file) or ""
-    def fmt(v):
-        try:
-            return f"{float(v):.6f}"
-        except Exception:
-            return ""
-    csv_vals = [
-        lang_key,
-        input_file or "",
-        fmt(pass_at_k.get("pass@1", "")),
-        fmt(pass_at_k.get("pass@10", "")),
-        fmt(pass_at_k.get("pass@100", "")),
-    ]
     # Only CSV row to stdout
-    print(",".join(csv_vals))
+    print(_format_metric_csv_row(lang_key, input_file or "", pass_at_k, k))
     print("Evaluation finished.", file=sys.stderr)
+
+
+def _fmt_metric(v):
+    try:
+        return f"{float(v):.6f}"
+    except Exception:
+        return ""
+
+
+def _metric_fieldnames(k: List[int]) -> List[str]:
+    fieldnames = ["language", "input_file"]
+    for kk in k:
+        fieldnames.append(f"pass@{kk}")
+        fieldnames.append(f"pass@{kk}_std")
+    return fieldnames
+
+
+def _metric_row(lang_key: str, input_file: str, metrics: Dict[str, float], k: List[int]) -> Dict[str, str]:
+    row = {
+        "language": lang_key,
+        "input_file": input_file,
+    }
+    for kk in k:
+        row[f"pass@{kk}"] = _fmt_metric(metrics.get(f"pass@{kk}", ""))
+        row[f"pass@{kk}_std"] = _fmt_metric(metrics.get(f"pass@{kk}_std", ""))
+    return row
+
+
+def _format_metric_csv_row(lang_key: str, input_file: str, metrics: Dict[str, float], k: List[int]) -> str:
+    row = _metric_row(lang_key, input_file, metrics, k)
+    return ",".join(row.get(field, "") for field in _metric_fieldnames(k))
+
+
+def _normalize_lang(raw: str) -> str:
+    return {
+        "javascript": "js",
+        "js": "js",
+        "python": "python",
+        "py": "python",
+        "c++": "cpp",
+        "cplusplus": "cpp",
+        "cpp": "cpp",
+        "go": "go",
+        "java": "java",
+        "rust": "rust",
+    }.get((raw or "").lower(), (raw or "").lower())
+
+
+def _metric_summary_from_results(results_file: str, k: List[int]) -> Tuple[Dict[str, float], int, int, str]:
+    rows = stream_jsonl_all(results_file)
+    grouped = defaultdict(list)
+    lang = ""
+    for row in rows:
+        if "task_id" not in row or "passed" not in row:
+            continue
+        if not lang and "/" in row["task_id"]:
+            lang = _normalize_lang(row["task_id"].split("/", 1)[0])
+        grouped[row["task_id"]].append(bool(row["passed"]))
+
+    total = np.array([len(v) for v in grouped.values()])
+    correct = np.array([sum(v) for v in grouped.values()])
+    metrics = {}
+    if len(total) == 0:
+        return metrics, 0, 0, lang
+
+    for kk in k:
+        if (total >= kk).all():
+            vals = estimate_pass_at_k(total, correct, kk)
+            metrics[f"pass@{kk}"] = vals.mean()
+            metrics[f"pass@{kk}_std"] = vals.std(ddof=1) if len(vals) > 1 else 0.0
+
+    return metrics, int(len(grouped)), int(total.sum()), lang
+
+
+def summarize_results_jsonl(
+        results_file: str,
+        csv_out: str = None,
+        problem_file: str = None,
+        k: List[int] = [1, 5, 10, 100],
+):
+    """Summarize an existing *_results.jsonl file into pass@k CSV metrics."""
+    if not results_file:
+        raise ValueError("results_file is required when from_results=True")
+
+    metrics, n_tasks, n_samples, result_lang = _metric_summary_from_results(results_file, k)
+    lang_key = result_lang or (_lang_from_problem_file(problem_file) if problem_file else None)
+    if lang_key is None:
+        lang_key = _extract_translation_target(results_file) or ""
+
+    fieldnames = _metric_fieldnames(k)
+    row = _metric_row(lang_key, results_file, metrics, k)
+
+    if csv_out:
+        with open(csv_out, "w", newline="") as fp:
+            writer = csv.DictWriter(fp, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerow(row)
+        print(f"CSV written to: {csv_out}", file=sys.stderr)
+    else:
+        writer = csv.DictWriter(sys.stdout, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerow(row)
+
+    return row
 
 
 def main():
