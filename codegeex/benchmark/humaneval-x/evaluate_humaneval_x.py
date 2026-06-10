@@ -365,9 +365,9 @@ def evaluate_functional_correctness(
         ks = k
         for kk in ks:
             if (total >= kk).all():
-                pass_values = estimate_pass_at_k(total, correct, kk)
-                pass_at_k[f"pass@{kk}"] = pass_values.mean()
-                pass_at_k[f"pass@{kk}_std"] = pass_values.std(ddof=1) if len(pass_values) > 1 else 0.0
+                pass_mean, pass_std = _pass_at_k_mean_std(total, correct, kk)
+                pass_at_k[f"pass@{kk}"] = pass_mean
+                pass_at_k[f"pass@{kk}_std"] = pass_std
     else:
         # Keep totals on stderr for diagnostics without polluting stdout CSV
         print("Total:", np.sum(total), file=sys.stderr)
@@ -424,6 +424,15 @@ def _format_metric_csv_row(lang_key: str, input_file: str, metrics: Dict[str, fl
     return ",".join(row.get(field, "") for field in _metric_fieldnames(k))
 
 
+def _pass_at_k_mean_std(total: np.ndarray, correct: np.ndarray, k: int) -> Tuple[float, float]:
+    pass_values = estimate_pass_at_k(total, correct, k)
+    mean = float(pass_values.mean())
+    # Standard deviation of the aggregate pass@k mean under random k-sampling.
+    # When n == k, each task's pass@k is deterministic (0 or 1), so this is 0.
+    std = float(np.sqrt(np.sum(pass_values * (1.0 - pass_values))) / len(pass_values))
+    return mean, std
+
+
 def _normalize_lang(raw: str) -> str:
     return {
         "javascript": "js",
@@ -439,6 +448,14 @@ def _normalize_lang(raw: str) -> str:
     }.get((raw or "").lower(), (raw or "").lower())
 
 
+def _is_passed(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.lower() == "true" or value == "passed"
+    return bool(value)
+
+
 def _metric_summary_from_results(results_file: str, k: List[int]) -> Tuple[Dict[str, float], int, int, str]:
     rows = stream_jsonl_all(results_file)
     grouped = defaultdict(list)
@@ -448,7 +465,7 @@ def _metric_summary_from_results(results_file: str, k: List[int]) -> Tuple[Dict[
             continue
         if not lang and "/" in row["task_id"]:
             lang = _normalize_lang(row["task_id"].split("/", 1)[0])
-        grouped[row["task_id"]].append(bool(row["passed"]))
+        grouped[row["task_id"]].append(_is_passed(row["passed"]))
 
     total = np.array([len(v) for v in grouped.values()])
     correct = np.array([sum(v) for v in grouped.values()])
@@ -458,9 +475,9 @@ def _metric_summary_from_results(results_file: str, k: List[int]) -> Tuple[Dict[
 
     for kk in k:
         if (total >= kk).all():
-            vals = estimate_pass_at_k(total, correct, kk)
-            metrics[f"pass@{kk}"] = vals.mean()
-            metrics[f"pass@{kk}_std"] = vals.std(ddof=1) if len(vals) > 1 else 0.0
+            pass_mean, pass_std = _pass_at_k_mean_std(total, correct, kk)
+            metrics[f"pass@{kk}"] = pass_mean
+            metrics[f"pass@{kk}_std"] = pass_std
 
     return metrics, int(len(grouped)), int(total.sum()), lang
 
