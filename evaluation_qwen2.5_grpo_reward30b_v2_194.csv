@@ -1,4 +1,4 @@
-language,input_file,pass@1,pass@1_std,pass@5,pass@5_std,pass@10,pass@10_std,pass@100,pass@100_std
+language,input_file,pass@1,pass@1_se,pass@5,pass@5_se,pass@10,pass@10_se,pass@100,pass@100_se
 go,/workspace/codegeex/benchmark/humaneval-x/cpp/evaluation_qwen2.5_grpo_reward30b_v2_194/humaneval_cpp_to_go.jsonl,0.276829,0.018170,0.426829,0.000000,,,,
 java,/workspace/codegeex/benchmark/humaneval-x/cpp/evaluation_qwen2.5_grpo_reward30b_v2_194/humaneval_cpp_to_java.jsonl,0.393902,0.017247,0.530488,0.000000,,,,
 js,/workspace/codegeex/benchmark/humaneval-x/cpp/evaluation_qwen2.5_grpo_reward30b_v2_194/humaneval_cpp_to_js.jsonl,0.475610,0.015232,0.573171,0.000000,,,,
@@ -29,4 +29,4 @@ go,/workspace/codegeex/benchmark/humaneval-x/rust/evaluation_qwen2.5_grpo_reward
 java,/workspace/codegeex/benchmark/humaneval-x/rust/evaluation_qwen2.5_grpo_reward30b_v2_194/humaneval_rust_to_java.jsonl,0.458537,0.017840,0.609756,0.000000,,,,
 js,/workspace/codegeex/benchmark/humaneval-x/rust/evaluation_qwen2.5_grpo_reward30b_v2_194/humaneval_rust_to_js.jsonl,0.413415,0.015329,0.518293,0.000000,,,,
 python,/workspace/codegeex/benchmark/humaneval-x/rust/evaluation_qwen2.5_grpo_reward30b_v2_194/humaneval_rust_to_python.jsonl,0.557317,0.017073,0.670732,0.000000,,,,
-total,ALL,0.406707,0.109869,0.542276,0.080127,,,,
+total,ALL,0.406707,0.003227,0.542276,0.000000,,,,
