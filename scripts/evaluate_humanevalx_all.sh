@@ -253,12 +253,13 @@ if rows:
     total["input_file"] = "ALL"
 
     for metric in metric_cols:
-        vals = []
+        lang_vals = {}
         for row in rows:
             value = row.get(metric, "")
             if value == "":
                 continue
-            vals.append(float(value))
+            lang_vals.setdefault(row.get("language", ""), []).append(float(value))
+        vals = [sum(values) / len(values) for values in lang_vals.values() if values]
         if not vals:
             continue
         total[metric] = f"{sum(vals) / len(vals):.6f}"
