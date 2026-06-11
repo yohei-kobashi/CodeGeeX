@@ -29,4 +29,4 @@ go,/workspace/codegeex/benchmark/humaneval-x/rust/evaluation_qwen3.5/humaneval_r
 java,/workspace/codegeex/benchmark/humaneval-x/rust/evaluation_qwen3.5/humaneval_rust_to_java.jsonl,0.750000,0.018971,0.871951,0.000000,,,,
 js,/workspace/codegeex/benchmark/humaneval-x/rust/evaluation_qwen3.5/humaneval_rust_to_js.jsonl,0.643902,0.022221,0.829268,0.000000,,,,
 python,/workspace/codegeex/benchmark/humaneval-x/rust/evaluation_qwen3.5/humaneval_rust_to_python.jsonl,0.781707,0.016721,0.865854,0.000000,,,,
-total,ALL,0.639837,0.161214,0.786789,0.113979,,,,
+total,ALL,0.639837,0.164382,0.786789,0.113961,,,,
