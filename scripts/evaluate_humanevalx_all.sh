@@ -131,7 +131,7 @@ case "${NO_RESUME_RAW,,}" in
 esac
 
 # Prepare CSV header (truncate if exists)
-echo "language,input_file,pass@1,pass@1_std,pass@5,pass@5_std,pass@10,pass@10_std,pass@100,pass@100_std" > "$CSV_OUT"
+echo "language,input_file,pass@1,pass@1_se,pass@5,pass@5_se,pass@10,pass@10_se,pass@100,pass@100_se" > "$CSV_OUT"
 
 # Optional: bind host node_modules as global in container if present (for js-md5, etc.)
 HOST_NODE_MODULES_DIR="$REPO_ROOT/node_modules"
@@ -235,43 +235,87 @@ for lang in "${langs[@]}"; do
   done
 done
 
-python3 - "$CSV_OUT" <<'PY'
+python3 - "$CSV_OUT" "$REPO_ROOT" <<'PY'
 import csv
+import json
 import math
+import os
 import sys
+from collections import defaultdict
 
 csv_path = sys.argv[1]
+repo_root = sys.argv[2]
 with open(csv_path, newline="") as fp:
     rows = list(csv.DictReader(fp))
 
+def result_path_from_input(path):
+    if not path:
+        return None
+    if path.startswith("/workspace/"):
+        path = os.path.join(repo_root, path[len("/workspace/"):])
+    return path.replace(".jsonl", "_results.jsonl")
+
+def is_passed(value):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.lower() == "true" or value == "passed"
+    return bool(value)
+
+def estimate_pass_at_k(n, c, k):
+    if n - c < k:
+        return 1.0
+    prod = 1.0
+    for value in range(n - c + 1, n + 1):
+        prod *= 1.0 - k / value
+    return 1.0 - prod
+
+def metrics_from_results(paths, ks):
+    grouped = defaultdict(list)
+    for path in paths:
+        if not path or not os.path.exists(path):
+            continue
+        with open(path) as fp:
+            for line in fp:
+                if not line.strip():
+                    continue
+                row = json.loads(line)
+                if "task_id" not in row or "passed" not in row:
+                    continue
+                grouped[(path, row["task_id"])].append(is_passed(row["passed"]))
+    if not grouped:
+        return {}
+    totals = [len(values) for values in grouped.values()]
+    correct = [sum(values) for values in grouped.values()]
+    out = {}
+    for k in ks:
+        if not all(total >= k for total in totals):
+            continue
+        pass_values = [estimate_pass_at_k(total, corr, k) for total, corr in zip(totals, correct)]
+        mean = sum(pass_values) / len(pass_values)
+        se = math.sqrt(sum(value * (1.0 - value) for value in pass_values)) / len(pass_values)
+        out[f"pass@{k}"] = f"{mean:.6f}"
+        out[f"pass@{k}_se"] = f"{se:.6f}"
+    return out
+
 if rows:
     fieldnames = list(rows[0].keys())
-    metric_cols = [c for c in fieldnames if c.startswith("pass@") and not c.endswith("_std")]
+    metric_cols = [c for c in fieldnames if c.startswith("pass@") and not c.endswith("_se")]
+    ks = [int(c.split("@", 1)[1]) for c in metric_cols]
 
     total = {field: "" for field in fieldnames}
     total["language"] = "total"
     total["input_file"] = "ALL"
 
-    for metric in metric_cols:
-        lang_vals = {}
-        for row in rows:
-            value = row.get(metric, "")
-            if value == "":
-                continue
-            lang_vals.setdefault(row.get("language", ""), []).append(float(value))
-        vals = [sum(values) / len(values) for values in lang_vals.values() if values]
-        if not vals:
-            continue
-        total[metric] = f"{sum(vals) / len(vals):.6f}"
+    result_paths = [result_path_from_input(row.get("input_file", "")) for row in rows]
+    total.update(metrics_from_results(result_paths, ks))
 
-        std_col = f"{metric}_std"
-        if std_col in total:
-            if len(vals) > 1:
-                mean = sum(vals) / len(vals)
-                var = sum((v - mean) ** 2 for v in vals) / (len(vals) - 1)
-                total[std_col] = f"{math.sqrt(var):.6f}"
-            else:
-                total[std_col] = "0.000000"
+    if not any(total.get(metric, "") for metric in metric_cols):
+        for metric in metric_cols:
+            vals = [float(row[metric]) for row in rows if row.get(metric, "")]
+            if not vals:
+                continue
+            total[metric] = f"{sum(vals) / len(vals):.6f}"
 
     with open(csv_path, "a", newline="") as fp:
         writer = csv.DictWriter(fp, fieldnames=fieldnames)
