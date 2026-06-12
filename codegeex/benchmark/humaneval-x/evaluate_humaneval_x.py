@@ -368,6 +368,8 @@ def evaluate_functional_correctness(
                 pass_mean, pass_se = _pass_at_k_mean_se(total, correct, kk)
                 pass_at_k[f"pass@{kk}"] = pass_mean
                 pass_at_k[f"pass@{kk}_se"] = pass_se
+        if 1 in ks:
+            pass_at_k["pass@1_se"] = _pass_at_1_completion_se_from_results(results)
     else:
         # Keep totals on stderr for diagnostics without polluting stdout CSV
         print("Total:", np.sum(total), file=sys.stderr)
@@ -433,6 +435,29 @@ def _pass_at_k_mean_se(total: np.ndarray, correct: np.ndarray, k: int) -> Tuple[
     return mean, se
 
 
+def _standard_error(values: List[float]) -> float:
+    if len(values) <= 1:
+        return 0.0
+    arr = np.array(values, dtype=float)
+    return float(arr.std(ddof=1) / np.sqrt(len(arr)))
+
+
+def _pass_at_1_completion_se_from_results(results: Dict[str, List[Tuple[int, Dict]]]) -> float:
+    by_completion = defaultdict(list)
+    for task_results in results.values():
+        for index, result_pair in enumerate(sorted(task_results, key=lambda item: item[0])):
+            completion_id, result = result_pair
+            if completion_id is None:
+                completion_id = index
+            by_completion[completion_id].append(bool(result["passed"]))
+    completion_means = [
+        sum(passed) / len(passed)
+        for passed in by_completion.values()
+        if passed
+    ]
+    return _standard_error(completion_means)
+
+
 def _normalize_lang(raw: str) -> str:
     return {
         "javascript": "js",
@@ -459,13 +484,21 @@ def _is_passed(value) -> bool:
 def _metric_summary_from_results(results_file: str, k: List[int]) -> Tuple[Dict[str, float], int, int, str]:
     rows = stream_jsonl_all(results_file)
     grouped = defaultdict(list)
+    by_completion = defaultdict(list)
     lang = ""
+    fallback_completion = defaultdict(int)
     for row in rows:
         if "task_id" not in row or "passed" not in row:
             continue
         if not lang and "/" in row["task_id"]:
             lang = _normalize_lang(row["task_id"].split("/", 1)[0])
-        grouped[row["task_id"]].append(_is_passed(row["passed"]))
+        passed = _is_passed(row["passed"])
+        grouped[row["task_id"]].append(passed)
+        completion_id = row.get("completion_id")
+        if completion_id is None:
+            completion_id = fallback_completion[row["task_id"]]
+        fallback_completion[row["task_id"]] += 1
+        by_completion[completion_id].append(passed)
 
     total = np.array([len(v) for v in grouped.values()])
     correct = np.array([sum(v) for v in grouped.values()])
@@ -478,6 +511,13 @@ def _metric_summary_from_results(results_file: str, k: List[int]) -> Tuple[Dict[
             pass_mean, pass_se = _pass_at_k_mean_se(total, correct, kk)
             metrics[f"pass@{kk}"] = pass_mean
             metrics[f"pass@{kk}_se"] = pass_se
+    if 1 in k:
+        completion_means = [
+            sum(passed) / len(passed)
+            for passed in by_completion.values()
+            if passed
+        ]
+        metrics["pass@1_se"] = _standard_error(completion_means)
 
     return metrics, int(len(grouped)), int(total.sum()), lang
 

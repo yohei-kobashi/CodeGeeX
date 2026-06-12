@@ -272,6 +272,8 @@ def estimate_pass_at_k(n, c, k):
 
 def metrics_from_results(paths, ks):
     grouped = defaultdict(list)
+    by_completion = defaultdict(list)
+    fallback_completion = defaultdict(int)
     for path in paths:
         if not path or not os.path.exists(path):
             continue
@@ -282,7 +284,14 @@ def metrics_from_results(paths, ks):
                 row = json.loads(line)
                 if "task_id" not in row or "passed" not in row:
                     continue
-                grouped[(path, row["task_id"])].append(is_passed(row["passed"]))
+                task_key = (path, row["task_id"])
+                passed = is_passed(row["passed"])
+                grouped[task_key].append(passed)
+                completion_id = row.get("completion_id")
+                if completion_id is None:
+                    completion_id = fallback_completion[task_key]
+                fallback_completion[task_key] += 1
+                by_completion[completion_id].append(passed)
     if not grouped:
         return {}
     totals = [len(values) for values in grouped.values()]
@@ -296,6 +305,18 @@ def metrics_from_results(paths, ks):
         se = math.sqrt(sum(value * (1.0 - value) for value in pass_values)) / len(pass_values)
         out[f"pass@{k}"] = f"{mean:.6f}"
         out[f"pass@{k}_se"] = f"{se:.6f}"
+    if 1 in ks and by_completion:
+        completion_means = [
+            sum(values) / len(values)
+            for values in by_completion.values()
+            if values
+        ]
+        if len(completion_means) > 1:
+            mean = sum(completion_means) / len(completion_means)
+            var = sum((value - mean) ** 2 for value in completion_means) / (len(completion_means) - 1)
+            out["pass@1_se"] = f"{math.sqrt(var) / math.sqrt(len(completion_means)):.6f}"
+        else:
+            out["pass@1_se"] = "0.000000"
     return out
 
 if rows:
