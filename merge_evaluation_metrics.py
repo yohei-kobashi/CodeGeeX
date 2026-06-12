@@ -8,7 +8,7 @@ from functools import lru_cache
 from pathlib import Path
 
 
-SELECTED_COLUMNS = ["language", "input_file", "pass@1", "pass@1_se", "pass@5", "pass@5_se"]
+SELECTED_COLUMNS = ["language", "input_file", "pass@1", "pass@1_se"]
 REQUIRED_COLUMNS = set(SELECTED_COLUMNS)
 SOURCE_LANGUAGE_ORDER = ["cpp", "go", "java", "js", "python", "rust"]
 
@@ -84,12 +84,21 @@ def standard_error(values: list[float]) -> float | None:
     return math.sqrt(variance) / math.sqrt(len(values))
 
 
-def paired_pass_at_1_se_diff(model_results: Path | None, baseline_results: Path | None) -> float | None:
+def paired_pass_at_1_diff_stats(model_results: Path | None, baseline_results: Path | None) -> tuple[float, float] | None:
     model_scores = task_pass_at_1(model_results)
     baseline_scores = task_pass_at_1(baseline_results)
     task_ids = sorted(set(model_scores) & set(baseline_scores))
     diffs = [model_scores[task_id] - baseline_scores[task_id] for task_id in task_ids]
-    return standard_error(diffs)
+    if not diffs:
+        return None
+    return sum(diffs) / len(diffs), standard_error(diffs) or 0.0
+
+
+def ci95(diff: float | None, se: float | None) -> tuple[float | None, float | None]:
+    if diff is None or se is None:
+        return None, None
+    margin = 1.96 * se
+    return diff - margin, diff + margin
 
 
 def format_optional(value: float | None, fallback: str = "") -> str:
@@ -144,7 +153,16 @@ def merge_evaluations(input_dir: Path, output_path: Path) -> int:
     with output_path.open("w", newline="", encoding="utf-8") as output_file:
         writer = csv.DictWriter(
             output_file,
-            fieldnames=["evaluation", "source_language", "language", "pass@1", "pass@1_se", "pass@5", "pass@5_se"],
+            fieldnames=[
+                "evaluation",
+                "source_language",
+                "language",
+                "pass@1",
+                "pass@1_diff",
+                "pass@1_diff_se",
+                "pass@1_diff_ci95_low",
+                "pass@1_diff_ci95_high",
+            ],
             extrasaction="ignore",
         )
         writer.writeheader()
@@ -157,16 +175,20 @@ def merge_evaluations(input_dir: Path, output_path: Path) -> int:
 
             for row in rows_by_eval[eval_name]:
                 baseline_row = baseline_rows.get((row["_source_language"], row["language"]))
+                diff = None
                 se_diff = None
                 if baseline_row is not None:
                     if eval_name == baseline_name:
+                        diff = 0.0
                         se_diff = 0.0
                     elif row["language"] == "total":
                         se_diff = None
                     else:
                         model_results = result_path_from_input(row["input_file"], input_dir)
                         baseline_results = result_path_from_input(baseline_row["input_file"], input_dir)
-                        se_diff = paired_pass_at_1_se_diff(model_results, baseline_results)
+                        stats = paired_pass_at_1_diff_stats(model_results, baseline_results)
+                        if stats is not None:
+                            diff, se_diff = stats
                         model_scores = task_pass_at_1(model_results)
                         baseline_scores = task_pass_at_1(baseline_results)
                         all_diffs.extend(
@@ -175,7 +197,14 @@ def merge_evaluations(input_dir: Path, output_path: Path) -> int:
                         )
 
                 if row["language"] == "total" and baseline_name is not None:
-                    se_diff = standard_error(all_diffs) if eval_name != baseline_name else 0.0
+                    if eval_name == baseline_name:
+                        diff = 0.0
+                        se_diff = 0.0
+                    elif all_diffs:
+                        diff = sum(all_diffs) / len(all_diffs)
+                        se_diff = standard_error(all_diffs)
+
+                ci_low, ci_high = ci95(diff, se_diff)
 
                 writer.writerow(
                     {
@@ -183,9 +212,10 @@ def merge_evaluations(input_dir: Path, output_path: Path) -> int:
                         "source_language": row["_source_language"],
                         "language": row["language"],
                         "pass@1": row["pass@1"],
-                        "pass@1_se": format_optional(se_diff, row["pass@1_se"]),
-                        "pass@5": row["pass@5"],
-                        "pass@5_se": row["pass@5_se"],
+                        "pass@1_diff": format_optional(diff),
+                        "pass@1_diff_se": format_optional(se_diff),
+                        "pass@1_diff_ci95_low": format_optional(ci_low),
+                        "pass@1_diff_ci95_high": format_optional(ci_high),
                     }
                 )
                 row_count += 1
@@ -195,7 +225,7 @@ def merge_evaluations(input_dir: Path, output_path: Path) -> int:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Merge evaluation_*.csv files and replace pass@1_se with paired SE_diff vs qwen2.5/qwen3.5 baselines when results JSONL files are available."
+        description="Merge pass@1 metrics and report paired diff SE/95% CI vs qwen2.5/qwen3.5 baselines when results JSONL files are available."
     )
     parser.add_argument(
         "-i",
