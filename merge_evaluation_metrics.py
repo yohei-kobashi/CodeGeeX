@@ -6,6 +6,7 @@ import random
 from collections import defaultdict
 from functools import lru_cache
 from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
 
 SELECTED_COLUMNS = ["language", "input_file", "pass@1"]
@@ -29,7 +30,7 @@ def source_language(row_index: int, language: str) -> str:
     return SOURCE_LANGUAGE_ORDER[source_index]
 
 
-def baseline_evaluation_name(name: str) -> str | None:
+def baseline_evaluation_name(name: str) -> Optional[str]:
     if name == "qwen2.5" or name.startswith("qwen2.5_"):
         return "qwen2.5"
     if name == "qwen3.5" or name.startswith("qwen3.5_"):
@@ -37,7 +38,7 @@ def baseline_evaluation_name(name: str) -> str | None:
     return None
 
 
-def result_path_from_input(input_file: str, repo_root: Path) -> Path | None:
+def result_path_from_input(input_file: str, repo_root: Path) -> Optional[Path]:
     if not input_file or input_file == "ALL":
         return None
     path = input_file
@@ -55,7 +56,7 @@ def is_passed(value) -> bool:
 
 
 @lru_cache(maxsize=None)
-def task_pass_at_1(results_path: Path | None) -> dict[str, float]:
+def task_pass_at_1(results_path: Optional[Path]) -> Dict[str, float]:
     if results_path is None or not results_path.exists():
         return {}
 
@@ -76,7 +77,7 @@ def task_pass_at_1(results_path: Path | None) -> dict[str, float]:
     }
 
 
-def percentile(sorted_values: list[float], q: float) -> float | None:
+def percentile(sorted_values: List[float], q: float) -> Optional[float]:
     if not sorted_values:
         return None
     if len(sorted_values) == 1:
@@ -88,7 +89,7 @@ def percentile(sorted_values: list[float], q: float) -> float | None:
     return sorted_values[lower] * (1.0 - weight) + sorted_values[upper] * weight
 
 
-def bootstrap_ci95(diffs: list[float], samples: int, rng: random.Random) -> tuple[float, float] | None:
+def bootstrap_ci95(diffs: List[float], samples: int, rng: random.Random) -> Optional[Tuple[float, float]]:
     if not diffs:
         return None
     if len(diffs) == 1:
@@ -110,11 +111,11 @@ def bootstrap_ci95(diffs: list[float], samples: int, rng: random.Random) -> tupl
 
 
 def paired_pass_at_1_diff_stats(
-    model_results: Path | None,
-    baseline_results: Path | None,
+    model_results: Optional[Path],
+    baseline_results: Optional[Path],
     samples: int,
     rng: random.Random,
-) -> tuple[float, float, float] | None:
+) -> Optional[Tuple[float, float, float]]:
     model_scores = task_pass_at_1(model_results)
     baseline_scores = task_pass_at_1(baseline_results)
     task_ids = sorted(set(model_scores) & set(baseline_scores))
@@ -127,13 +128,13 @@ def paired_pass_at_1_diff_stats(
     return sum(diffs) / len(diffs), ci[0], ci[1]
 
 
-def format_optional(value: float | None, fallback: str = "") -> str:
+def format_optional(value: Optional[float], fallback: str = "") -> str:
     if value is None:
         return fallback
     return f"{value:.6f}"
 
 
-def load_evaluation_rows(input_file: Path) -> list[dict[str, str]]:
+def load_evaluation_rows(input_file: Path) -> List[Dict[str, str]]:
     rows = []
     with input_file.open(newline="", encoding="utf-8") as csv_file:
         reader = csv.DictReader(csv_file)
