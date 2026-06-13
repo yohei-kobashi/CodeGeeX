@@ -2,13 +2,13 @@
 import argparse
 import csv
 import json
-import math
+import random
 from collections import defaultdict
 from functools import lru_cache
 from pathlib import Path
 
 
-SELECTED_COLUMNS = ["language", "input_file", "pass@1", "pass@1_se"]
+SELECTED_COLUMNS = ["language", "input_file", "pass@1"]
 REQUIRED_COLUMNS = set(SELECTED_COLUMNS)
 SOURCE_LANGUAGE_ORDER = ["cpp", "go", "java", "js", "python", "rust"]
 
@@ -76,29 +76,55 @@ def task_pass_at_1(results_path: Path | None) -> dict[str, float]:
     }
 
 
-def standard_error(values: list[float]) -> float | None:
-    if len(values) <= 1:
-        return 0.0 if values else None
-    mean = sum(values) / len(values)
-    variance = sum((value - mean) ** 2 for value in values) / (len(values) - 1)
-    return math.sqrt(variance) / math.sqrt(len(values))
+def percentile(sorted_values: list[float], q: float) -> float | None:
+    if not sorted_values:
+        return None
+    if len(sorted_values) == 1:
+        return sorted_values[0]
+    position = (len(sorted_values) - 1) * q
+    lower = int(position)
+    upper = min(lower + 1, len(sorted_values) - 1)
+    weight = position - lower
+    return sorted_values[lower] * (1.0 - weight) + sorted_values[upper] * weight
 
 
-def paired_pass_at_1_diff_stats(model_results: Path | None, baseline_results: Path | None) -> tuple[float, float] | None:
+def bootstrap_ci95(diffs: list[float], samples: int, rng: random.Random) -> tuple[float, float] | None:
+    if not diffs:
+        return None
+    if len(diffs) == 1:
+        return diffs[0], diffs[0]
+
+    n = len(diffs)
+    bootstrap_means = []
+    for _ in range(samples):
+        total = 0.0
+        for _ in range(n):
+            total += diffs[rng.randrange(n)]
+        bootstrap_means.append(total / n)
+    bootstrap_means.sort()
+    low = percentile(bootstrap_means, 0.025)
+    high = percentile(bootstrap_means, 0.975)
+    if low is None or high is None:
+        return None
+    return low, high
+
+
+def paired_pass_at_1_diff_stats(
+    model_results: Path | None,
+    baseline_results: Path | None,
+    samples: int,
+    rng: random.Random,
+) -> tuple[float, float, float] | None:
     model_scores = task_pass_at_1(model_results)
     baseline_scores = task_pass_at_1(baseline_results)
     task_ids = sorted(set(model_scores) & set(baseline_scores))
     diffs = [model_scores[task_id] - baseline_scores[task_id] for task_id in task_ids]
     if not diffs:
         return None
-    return sum(diffs) / len(diffs), standard_error(diffs) or 0.0
-
-
-def ci95(diff: float | None, se: float | None) -> tuple[float | None, float | None]:
-    if diff is None or se is None:
-        return None, None
-    margin = 1.96 * se
-    return diff - margin, diff + margin
+    ci = bootstrap_ci95(diffs, samples, rng)
+    if ci is None:
+        return None
+    return sum(diffs) / len(diffs), ci[0], ci[1]
 
 
 def format_optional(value: float | None, fallback: str = "") -> str:
@@ -123,7 +149,10 @@ def load_evaluation_rows(input_file: Path) -> list[dict[str, str]]:
     return rows
 
 
-def merge_evaluations(input_dir: Path, output_path: Path) -> int:
+def merge_evaluations(input_dir: Path, output_path: Path, bootstrap_samples: int, bootstrap_seed: int) -> int:
+    if bootstrap_samples <= 0:
+        raise ValueError("bootstrap_samples must be positive")
+
     input_files = sorted(
         path
         for path in input_dir.glob("evaluation_*.csv")
@@ -148,6 +177,7 @@ def merge_evaluations(input_dir: Path, output_path: Path) -> int:
     }
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    rng = random.Random(bootstrap_seed)
 
     row_count = 0
     with output_path.open("w", newline="", encoding="utf-8") as output_file:
@@ -159,7 +189,6 @@ def merge_evaluations(input_dir: Path, output_path: Path) -> int:
                 "language",
                 "pass@1",
                 "pass@1_diff",
-                "pass@1_diff_se",
                 "pass@1_diff_ci95_low",
                 "pass@1_diff_ci95_high",
             ],
@@ -176,19 +205,27 @@ def merge_evaluations(input_dir: Path, output_path: Path) -> int:
             for row in rows_by_eval[eval_name]:
                 baseline_row = baseline_rows.get((row["_source_language"], row["language"]))
                 diff = None
-                se_diff = None
+                ci_low = None
+                ci_high = None
                 if baseline_row is not None:
                     if eval_name == baseline_name:
                         diff = 0.0
-                        se_diff = 0.0
+                        ci_low = 0.0
+                        ci_high = 0.0
                     elif row["language"] == "total":
-                        se_diff = None
+                        ci_low = None
+                        ci_high = None
                     else:
                         model_results = result_path_from_input(row["input_file"], input_dir)
                         baseline_results = result_path_from_input(baseline_row["input_file"], input_dir)
-                        stats = paired_pass_at_1_diff_stats(model_results, baseline_results)
+                        stats = paired_pass_at_1_diff_stats(
+                            model_results,
+                            baseline_results,
+                            bootstrap_samples,
+                            rng,
+                        )
                         if stats is not None:
-                            diff, se_diff = stats
+                            diff, ci_low, ci_high = stats
                         model_scores = task_pass_at_1(model_results)
                         baseline_scores = task_pass_at_1(baseline_results)
                         all_diffs.extend(
@@ -199,12 +236,13 @@ def merge_evaluations(input_dir: Path, output_path: Path) -> int:
                 if row["language"] == "total" and baseline_name is not None:
                     if eval_name == baseline_name:
                         diff = 0.0
-                        se_diff = 0.0
+                        ci_low = 0.0
+                        ci_high = 0.0
                     elif all_diffs:
                         diff = sum(all_diffs) / len(all_diffs)
-                        se_diff = standard_error(all_diffs)
-
-                ci_low, ci_high = ci95(diff, se_diff)
+                        ci = bootstrap_ci95(all_diffs, bootstrap_samples, rng)
+                        if ci is not None:
+                            ci_low, ci_high = ci
 
                 writer.writerow(
                     {
@@ -213,7 +251,6 @@ def merge_evaluations(input_dir: Path, output_path: Path) -> int:
                         "language": row["language"],
                         "pass@1": row["pass@1"],
                         "pass@1_diff": format_optional(diff),
-                        "pass@1_diff_se": format_optional(se_diff),
                         "pass@1_diff_ci95_low": format_optional(ci_low),
                         "pass@1_diff_ci95_high": format_optional(ci_high),
                     }
@@ -225,7 +262,7 @@ def merge_evaluations(input_dir: Path, output_path: Path) -> int:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Merge pass@1 metrics and report paired diff SE/95% CI vs qwen2.5/qwen3.5 baselines when results JSONL files are available."
+        description="Merge pass@1 metrics and report paired bootstrap 95% CI vs qwen2.5/qwen3.5 baselines when results JSONL files are available."
     )
     parser.add_argument(
         "-i",
@@ -241,13 +278,25 @@ def main() -> None:
         default=Path("evaluation_metrics_summary.csv"),
         help="Output CSV path. Defaults to evaluation_metrics_summary.csv.",
     )
+    parser.add_argument(
+        "--bootstrap-samples",
+        type=int,
+        default=10000,
+        help="Number of paired bootstrap resamples for pass@1_diff confidence intervals.",
+    )
+    parser.add_argument(
+        "--bootstrap-seed",
+        type=int,
+        default=0,
+        help="Random seed for paired bootstrap resampling.",
+    )
     args = parser.parse_args()
 
     output_path = args.output
     if not output_path.is_absolute():
         output_path = args.input_dir / output_path
 
-    row_count = merge_evaluations(args.input_dir, output_path)
+    row_count = merge_evaluations(args.input_dir, output_path, args.bootstrap_samples, args.bootstrap_seed)
     print(f"Wrote {row_count} rows to {output_path}")
 
 
