@@ -83,8 +83,8 @@ OUTPUT_DIRS=(
   # "evaluation_qwen2.5_grpo_reward30b_v2_194"
   # "evaluation_qwen3.5_grpo_reward80b_v2_100"
   # "evaluation_qwen3.5_grpo_reward80b_v2_194"
-  "evaluation_qwen2.5_drgrpo_reward30b_100"
-  "evaluation_qwen2.5_drgrpo_reward30b_194"
+  "evaluation_qwen3.5_drgrpo_reward30b_100"
+  "evaluation_qwen3.5_drgrpo_reward30b_194"
   "evaluation_qwen3.5_dapo_reward30b_100"
 )
 
