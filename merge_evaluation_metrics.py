@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 
-SELECTED_COLUMNS = ["language", "input_file", "pass@1"]
+SELECTED_COLUMNS = ["language", "input_file", "pass@1", "pass@5"]
 REQUIRED_COLUMNS = set(SELECTED_COLUMNS)
 SOURCE_LANGUAGE_ORDER = ["cpp", "go", "java", "js", "python", "rust"]
 
@@ -192,6 +192,7 @@ def merge_evaluations(input_dir: Path, output_path: Path, bootstrap_samples: int
                 "pass@1_diff",
                 "pass@1_diff_ci95_low",
                 "pass@1_diff_ci95_high",
+                "pass@5",
             ],
             extrasaction="ignore",
         )
@@ -254,6 +255,7 @@ def merge_evaluations(input_dir: Path, output_path: Path, bootstrap_samples: int
                         "pass@1_diff": format_optional(diff),
                         "pass@1_diff_ci95_low": format_optional(ci_low),
                         "pass@1_diff_ci95_high": format_optional(ci_high),
+                        "pass@5": row["pass@5"],
                     }
                 )
                 row_count += 1
