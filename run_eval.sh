@@ -21,4 +21,5 @@ source env/bin/activate
 # bash scripts/evaluate_humanevalx_all.sh evaluation_qwen3.5_grpo_reward80b_v2_194 codegeex/benchmark/humaneval-x/humanevalx.sif 64 30 evaluation_qwen3.5_grpo_reward80b_v2_194.csv
 # bash scripts/evaluate_humanevalx_all.sh evaluation_qwen3.5_drgrpo_reward30b_100 codegeex/benchmark/humaneval-x/humanevalx.sif 64 30 evaluation_qwen3.5_drgrpo_reward30b_100.csv
 # bash scripts/evaluate_humanevalx_all.sh evaluation_qwen3.5_drgrpo_reward30b_194 codegeex/benchmark/humaneval-x/humanevalx.sif 64 30 evaluation_qwen3.5_drgrpo_reward30b_194.csv
-bash scripts/evaluate_humanevalx_all.sh evaluation_qwen3.5_dapo_reward30b_100 codegeex/benchmark/humaneval-x/humanevalx.sif 64 30 evaluation_qwen3.5_dapo_reward30b_100.csv
+# bash scripts/evaluate_humanevalx_all.sh evaluation_qwen3.5_dapo_reward30b_100 codegeex/benchmark/humaneval-x/humanevalx.sif 64 30 evaluation_qwen3.5_dapo_reward30b_100.csv
+bash scripts/evaluate_humanevalx_all.sh evaluation_qwen3.5_dapo_reward30b_ors_100 codegeex/benchmark/humaneval-x/humanevalx.sif 64 30 evaluation_qwen3.5_dapo_reward30b_ors_100.csv
