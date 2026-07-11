@@ -33,6 +33,8 @@ def source_language(row_index: int, language: str) -> str:
 def baseline_evaluation_name(name: str) -> Optional[str]:
     if name == "qwen2.5" or name.startswith("qwen2.5_"):
         return "qwen2.5"
+    if name == "qwen3.5_9B" or name.startswith("qwen3.5_9B_"):
+        return "qwen3.5_9B"
     if name == "qwen3.5" or name.startswith("qwen3.5_"):
         return "qwen3.5"
     return None
@@ -265,7 +267,7 @@ def merge_evaluations(input_dir: Path, output_path: Path, bootstrap_samples: int
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Merge pass@1 metrics and report paired bootstrap 95% CI vs qwen2.5/qwen3.5 baselines when results JSONL files are available."
+        description="Merge pass@1 metrics and report paired bootstrap 95% CI vs qwen2.5/qwen3.5/qwen3.5_9B baselines when results JSONL files are available."
     )
     parser.add_argument(
         "-i",
