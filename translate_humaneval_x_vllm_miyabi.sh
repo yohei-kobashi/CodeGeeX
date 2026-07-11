@@ -69,8 +69,10 @@ MODEL_NAMES=(
   # "/work/go25/share/model/code_trans_grpo_model_0409/Qwen3.5_4B_drgrpo_reward30b/global_step_194"
   # "/work/go25/share/model/code_trans_grpo_model_0409/Qwen3.5_4B_dapo_reward30b/global_step_100"
   # /work/go25/share/model/code_trans_grpo_model_0409/Qwen3.5_4B_dapo_reward30b_ors/global_step_100
-  /work/go25/share/model/code_trans_grpo_model_0702/Qwen3.5_4B_dapo_0702_reward35b_think/global_step_100
-  /work/go25/share/model/code_trans_grpo_model_0702/Qwen3.5_4B_dapo_0702_reward35b_nothink/global_step_100
+  # /work/go25/share/model/code_trans_grpo_model_0702/Qwen3.5_4B_dapo_0702_reward35b_think/global_step_100
+  # /work/go25/share/model/code_trans_grpo_model_0702/Qwen3.5_4B_dapo_0702_reward35b_nothink/global_step_100
+  /work/go25/share/model/code_trans_grpo_model_0702/Qwen3.5_9B_dapo_0702_reward35b_think/global_step_100
+  /work/go25/share/model/code_trans_grpo_model_0702/Qwen3.5_9B_dapo_0702_reward35b_nothink/global_step_100
 )
 
 OUTPUT_DIRS=(
@@ -90,8 +92,10 @@ OUTPUT_DIRS=(
   # "evaluation_qwen3.5_drgrpo_reward30b_194"
   # "evaluation_qwen3.5_dapo_reward30b_100"
   # "evaluation_qwen3.5_dapo_reward30b_ors_100"
-  "evaluation_qwen3.5_dapo_0702_reward35b_think_100"
-  "evaluation_qwen3.5_dapo_0702_reward35b_nothink_100"
+  # "evaluation_qwen3.5_dapo_0702_reward35b_think_100"
+  # "evaluation_qwen3.5_dapo_0702_reward35b_nothink_100"
+  "evaluation_qwen3.5_9B_dapo_0702_reward35b_think_100"
+  "evaluation_qwen3.5_9B_dapo_0702_reward35b_nothink_100"
 )
 
 if [[ "${#MODEL_NAMES[@]}" -ne "${#OUTPUT_DIRS[@]}" ]]; then
